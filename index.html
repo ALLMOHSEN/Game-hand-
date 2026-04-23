@@ -2,39 +2,54 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>AR Planet Hand Control</title>
+<title>AR Planet Pro</title>
+
 <style>
 body { margin:0; overflow:hidden; }
-canvas { position:absolute; top:0; left:0; }
+
+/* الكاميرا */
 video {
-  position:absolute;
+  position:fixed;
   top:0;
   left:0;
   width:100%;
   height:100%;
   object-fit:cover;
   z-index:0;
+  transform: scaleX(-1); /* تصحيح الكاميرا */
 }
+
+/* 3D */
+canvas {
+  position:fixed;
+  top:0;
+  left:0;
+  z-index:1;
+}
+
+/* UI */
 #label {
   position:absolute;
   top:20px;
   left:20px;
   color:white;
   z-index:2;
+  font-family:Arial;
 }
 </style>
 </head>
+
 <body>
 
 <video id="video" autoplay playsinline></video>
 <div id="label">Planet: Earth</div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.158/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
 <script>
-// ====== Three.js ======
+// ====== THREE ======
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
 camera.position.z = 3;
@@ -44,12 +59,12 @@ renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 
 // اضاءة
-scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 const light = new THREE.PointLight(0xffffff, 2);
 light.position.set(5,5,5);
 scene.add(light);
 
-// ====== الكواكب ======
+// ====== PLANETS ======
 const loader = new THREE.TextureLoader();
 
 const planets = [
@@ -72,23 +87,23 @@ const mat = new THREE.MeshStandardMaterial({
 const planet = new THREE.Mesh(geo,mat);
 scene.add(planet);
 
-// ====== انفجار ======
-const count = 1200;
+// ====== PARTICLES ======
+const count = 1500;
 const arr = new Float32Array(count*3);
 
 const pGeo = new THREE.BufferGeometry();
 pGeo.setAttribute('position', new THREE.BufferAttribute(arr,3));
 
-const pMat = new THREE.PointsMaterial({size:0.03, color:0xff6600});
+const pMat = new THREE.PointsMaterial({size:0.04, color:0xff6600});
 const particles = new THREE.Points(pGeo,pMat);
 scene.add(particles);
 
-// ====== حالات ======
+// ====== STATES ======
+let grab = false;
 let explode = false;
-let handDetected = false;
 let lastX = 0;
 
-// ====== تغيير الكوكب ======
+// ====== FUNCTIONS ======
 function changePlanet(dir){
   index += dir;
   if(index < 0) index = planets.length-1;
@@ -101,13 +116,12 @@ function changePlanet(dir){
     "Planet: " + planets[index].name;
 }
 
-// ====== الكامرة ======
-const video = document.getElementById('video');
-
+// ====== CAMERA ======
+const video = document.getElementById("video");
 navigator.mediaDevices.getUserMedia({video:true})
 .then(stream => video.srcObject = stream);
 
-// ====== MediaPipe ======
+// ====== MEDIAPIPE ======
 const hands = new Hands({
   locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
 });
@@ -118,36 +132,48 @@ hands.setOptions({
   minTrackingConfidence:0.7
 });
 
+// ====== HELPERS ======
+function distance(a,b){
+  return Math.sqrt(
+    Math.pow(a.x - b.x,2) +
+    Math.pow(a.y - b.y,2)
+  );
+}
+
+function isPinch(hand){
+  return distance(hand[4], hand[8]) < 0.05;
+}
+
 function isOpen(hand){
   return hand[8].y < hand[6].y;
 }
 
+// ====== RESULTS ======
 hands.onResults(results=>{
   if(results.multiHandLandmarks.length > 0){
-    handDetected = true;
 
     const hand = results.multiHandLandmarks[0];
-    explode = isOpen(hand);
 
-    const x = hand[8].x;
-    const y = hand[8].y;
+    let x = 1 - hand[8].x; // تصحيح الاتجاه
+    let y = hand[8].y;
 
-    // تحريك الكوكب مع اليد
-    planet.position.x = (x - 0.5) * 3;
-    planet.position.y = -(y - 0.5) * 2;
+    grab = isPinch(hand);
+    explode = isOpen(hand) && !grab;
 
-    // تحريك الانفجار مع الكوكب
-    particles.position.copy(planet.position);
+    // تحريك عند المسك
+    if(grab){
+      planet.position.x = (x - 0.5) * 3;
+      planet.position.y = -(y - 0.5) * 2;
+      particles.position.copy(planet.position);
+    }
 
-    // تبديل الكوكب
-    if(Math.abs(x - lastX) > 0.2){
+    // تبديل
+    if(Math.abs(x - lastX) > 0.2 && !grab){
       if(x > lastX) changePlanet(1);
       else changePlanet(-1);
       lastX = x;
     }
 
-  } else {
-    handDetected = false;
   }
 });
 
@@ -159,30 +185,25 @@ const cam = new Camera(video,{
 });
 cam.start();
 
-// ====== أنيميشن ======
+// ====== ANIMATION ======
 function animate(){
   requestAnimationFrame(animate);
 
   planet.rotation.y += 0.01;
 
-  if(handDetected){
-    if(explode){
-      planet.scale.set(0.3,0.3,0.3);
+  if(explode){
+    planet.scale.set(0.3,0.3,0.3);
 
-      const pos = pGeo.attributes.position.array;
-      for(let i=0;i<count;i++){
-        pos[i*3] += (Math.random()-0.5)*0.08;
-        pos[i*3+1] += (Math.random()-0.5)*0.08;
-        pos[i*3+2] += (Math.random()-0.5)*0.08;
-      }
-      pGeo.attributes.position.needsUpdate = true;
-
-    } else {
-      planet.scale.lerp(new THREE.Vector3(1,1,1),0.1);
+    const pos = pGeo.attributes.position.array;
+    for(let i=0;i<count;i++){
+      pos[i*3] += (Math.random()-0.5)*0.1;
+      pos[i*3+1] += (Math.random()-0.5)*0.1;
+      pos[i*3+2] += (Math.random()-0.5)*0.1;
     }
+    pGeo.attributes.position.needsUpdate = true;
 
   } else {
-    planet.scale.lerp(new THREE.Vector3(1,1,1),0.05);
+    planet.scale.lerp(new THREE.Vector3(1,1,1),0.1);
 
     const pos = pGeo.attributes.position.array;
     for(let i=0;i<count;i++){
@@ -196,7 +217,7 @@ function animate(){
   renderer.render(scene,camera);
 }
 animate();
-</script>
 
+</script>
 </body>
 </html>
