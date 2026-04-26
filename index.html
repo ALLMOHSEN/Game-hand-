@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>لوحة الرسم السحرية للأطفال ✨</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; transform: scaleX(-1); }
+        video { display: none; }
+        
+        /* شريط الأدوات العلوي */
+        #toolbar {
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 20px; z-index: 20; background: rgba(255,255,255,0.2);
+            padding: 10px 25px; border-radius: 50px; backdrop-filter: blur(10px);
+            border: 2px solid rgba(255,255,255,0.3);
+        }
+        .tool {
+            font-size: 30px; cursor: pointer; transition: transform 0.2s;
+            display: flex; align-items: center; justify-content: center;
+            width: 60px; height: 60px; border-radius: 50%;
+        }
+        .active-tool { background: white; transform: scale(1.2); box-shadow: 0 0 15px #fff; }
+    </style>
+</head>
+<body>
+
+<div id="toolbar">
+    <div id="pen-tool" class="tool active-tool">✏️</div>
+    <div id="eraser-tool" class="tool">🧼</div>
+</div>
+
+<video id="input_video"></video>
+<canvas id="output_canvas"></canvas>
+
+<script>
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+
+    // إعدادات الصور والمؤثرات
+    const elements = {
+        'fire': { src: 'Photoroom_20260309_185127.png', color: '255, 100, 0', img: new Image() },
+        'water': { src: 'Photoroom_20260309_185127.png', color: '0, 150, 255', img: new Image() },
+        'air': { src: 'Photoroom_20260309_185127.png', color: '200, 255, 200', img: new Image() }
+    };
+    for (let key in elements) elements[key].img.src = elements[key].src;
+
+    let particles = [];
+    let drawings = []; // لتخزين الخطوط المرسومة
+    let currentMode = 'pen'; // pen أو eraser
+    let hue = 0; // للون قوس قزح
+    const handStates = {};
+
+    function onResults(results) {
+        canvasElement.width = window.innerWidth;
+        canvasElement.height = window.innerHeight;
+        canvasCtx.save();
+        
+        // 1. رسم الكاميرا
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+        // 2. رسم الخطوط المخزنة (الكتابة)
+        drawings.forEach(path => {
+            canvasCtx.beginPath();
+            canvasCtx.lineCap = 'round';
+            canvasCtx.lineJoin = 'round';
+            canvasCtx.lineWidth = path.mode === 'eraser' ? 50 : 10;
+            canvasCtx.globalCompositeOperation = path.mode === 'eraser' ? 'destination-out' : 'source-over';
+            
+            canvasCtx.strokeStyle = path.color;
+            path.points.forEach((p, i) => {
+                if (i === 0) canvasCtx.moveTo(p.x, p.y);
+                else canvasCtx.lineTo(p.x, p.y);
+            });
+            canvasCtx.stroke();
+        });
+        canvasCtx.globalCompositeOperation = 'source-over';
+
+        if (results.multiHandLandmarks) {
+            results.multiHandLandmarks.forEach((landmarks, index) => {
+                if (!handStates[index]) handStates[index] = { currentElement: 'fire', isPinching: false };
+
+                const indexTip = landmarks[8];
+                const thumbTip = landmarks[4];
+                const middleRoot = landmarks[9];
+                
+                const x = indexTip.x * canvasElement.width;
+                const y = indexTip.y * canvasElement.height;
+                const dist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
+                const isPinching = dist < 0.05;
+
+                // --- منطق اختيار الأدوات من الأعلى ---
+                if (y < 100 && isPinching) {
+                    if (x < canvasElement.width / 2) {
+                        currentMode = 'eraser';
+                        document.getElementById('eraser-tool').classList.add('active-tool');
+                        document.getElementById('pen-tool').classList.remove('active-tool');
+                    } else {
+                        currentMode = 'pen';
+                        document.getElementById('pen-tool').classList.add('active-tool');
+                        document.getElementById('eraser-tool').classList.remove('active-tool');
+                    }
+                }
+
+                // --- منطق الرسم ---
+                if (isPinching) {
+                    if (!handStates[index].isDrawing) {
+                        drawings.push({ mode: currentMode, color: `hsl(${hue}, 100%, 50%)`, points: [] });
+                        handStates[index].isDrawing = true;
+                    }
+                    drawings[drawings.length - 1].points.push({ x, y });
+                    hue = (hue + 2) % 360; // تغيير اللون باستمرار
+                } else {
+                    handStates[index].isDrawing = false;
+                }
+
+                // --- رسم مؤثرات العناصر المتبقية ---
+                const currentData = elements[handStates[index].currentElement];
+                if (currentData.img.complete) {
+                    canvasCtx.save();
+                    canvasCtx.translate(x, y - 60);
+                    canvasCtx.scale(-1, 1);
+                    canvasCtx.shadowBlur = 15;
+                    canvasCtx.shadowColor = currentData.color;
+                    canvasCtx.drawImage(currentData.img, -30, -30, 60, 60);
+                    canvasCtx.restore();
+                }
+
+                // إضافة جسيمات عند حركة اليد
+                for (let i = 0; i < 2; i++) {
+                    particles.push({
+                        x, y, 
+                        sx: (Math.random()-0.5)*5, sy: (Math.random()-0.5)*5,
+                        life: 1.0, color: currentMode === 'pen' ? `hsl(${hue}, 100%, 50%)` : '#fff'
+                    });
+                }
+            });
+        }
+
+        // تحديث ورسم الجسيمات
+        particles = particles.filter(p => p.life > 0);
+        particles.forEach(p => {
+            p.x += p.sx; p.y += p.sy; p.life -= 0.02;
+            canvasCtx.fillStyle = p.color;
+            canvasCtx.globalAlpha = p.life;
+            canvasCtx.beginPath();
+            canvasCtx.arc(p.x, p.y, 3, 0, Math.PI*2);
+            canvasCtx.fill();
+        });
+        canvasCtx.globalAlpha = 1.0;
+
+        canvasCtx.restore();
+    }
+
+    const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    hands.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+        onFrame: async () => { await hands.send({image: videoElement}); },
+        width: 1280, height: 720
+    });
+    camera.start();
+</script>
+</body>
+</html>
