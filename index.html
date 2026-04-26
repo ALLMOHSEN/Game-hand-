@@ -2,311 +2,164 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>تحدي أحجية اليدين - التحكم الكامل</title>
-    
+    <title>تحكم العناصر الخارق - AR</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-
     <style>
-        :root {
-            --p1-color: #ff4757;
-            --p2-color: #2ed573;
-            --bg-color: #121212;
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; transform: scaleX(-1); }
+        video { display: none; }
+        #ui {
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+            color: white; text-align: center; z-index: 10; pointer-events: none;
+            background: rgba(0,0,0,0.5); padding: 10px 20px; border-radius: 20px;
         }
-
-        body {
-            margin: 0; padding: 0;
-            background: var(--bg-color);
-            color: white;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-        }
-
-        #header {
-            height: 60px;
-            background: #1f1f1f;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-bottom: 2px solid #333;
-            z-index: 10;
-        }
-
-        #main-container {
-            display: flex;
-            flex: 1;
-            position: relative;
-        }
-
-        .player-side {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            position: relative;
-        }
-
-        #p1-side { border-left: 2px solid var(--p1-color); }
-        #p2-side { border-right: 2px solid var(--p2-color); }
-
-        canvas {
-            max-width: 90%;
-            background: #000;
-            border-radius: 15px;
-            box-shadow: 0 20px 50px rgba(0,0,0,0.9);
-        }
-
-        /* حاوية الكاميرا مع تأثير المرآة */
-        #camera-module {
-            position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 260px;
-            height: 195px;
-            border: 3px solid #fff;
-            border-radius: 12px;
-            overflow: hidden;
-            z-index: 100;
-            background: #000;
-        }
-
-        video#input_video {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            transform: scaleX(-1); /* تأثير المرآة */
-        }
-
-        #capture-zone {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 40px;
-            background: rgba(255, 71, 87, 0.7);
-            text-align: center;
-            line-height: 40px;
-            font-weight: bold;
-            font-size: 14px;
-            pointer-events: none;
-        }
-
-        .win-screen {
-            position: absolute;
-            inset: 0;
-            background: rgba(0,0,0,0.85);
-            display: none;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            z-index: 200;
-            font-size: 48px;
-            color: gold;
-            text-shadow: 0 0 20px gold;
-        }
-
-        .instruction {
-            color: #ffbc00;
-            font-size: 18px;
-        }
+        .hint { font-size: 14px; color: #aaa; margin-top: 5px; }
     </style>
 </head>
 <body>
 
-<div id="header">
-    <div class="instruction" id="status-text">ارفع يدك واطبق أصابعك داخل المربع الأحمر للبدء!</div>
+<div id="ui">
+    <div id="mode-text">نمط العنصر: نار 🔥</div>
+    <div class="hint">فر يدك لتغيير العنصر | افتح يدك لتكبيره | اغلقها لتصغيره</div>
 </div>
 
-<div id="main-container">
-    <div id="p1-side" class="player-side">
-        <div id="win1" class="win-screen">🏆 فوز اللاعب 1!</div>
-        <canvas id="canvas1"></canvas>
-    </div>
-    
-    <div id="p2-side" class="player-side">
-        <div id="win2" class="win-screen">🏆 فوز اللاعب 2!</div>
-        <canvas id="canvas2"></canvas>
-    </div>
-
-    <div id="camera-module">
-        <div id="capture-zone">منطقة البدء (Pinch)</div>
-        <video id="input_video"></video>
-    </div>
-</div>
+<video id="input_video"></video>
+<canvas id="output_canvas"></canvas>
 
 <script>
     const videoElement = document.getElementById('input_video');
-    const canvas1 = document.getElementById('canvas1');
-    const canvas2 = document.getElementById('canvas2');
-    const ctx1 = canvas1.getContext('2d');
-    const ctx2 = canvas2.getContext('2d');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const modeText = document.getElementById('mode-text');
 
-    let pieces = [];
-    let gameActive = false;
-    let grabbedPiece = { player1: null, player2: null };
-    let puzzleImage = null;
+    let particles = [];
+    let currentElement = 'fire'; // fire, water, air
+    const elements = ['fire', 'water', 'air'];
+    let lastRotation = 0;
 
-    const grid = 3;
-    const size = 400; 
-    canvas1.width = canvas2.width = size;
-    canvas1.height = canvas2.height = size;
+    // إعدادات الصوت (Web Audio API)
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playEffectSound(type, size) {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        
+        if (type === 'fire') osc.type = 'sawtooth';
+        else if (type === 'water') osc.type = 'sine';
+        else osc.type = 'triangle';
 
-    function startPuzzle() {
-        if (gameActive) return;
+        osc.frequency.setValueAtTime(size * 10, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
         
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = videoElement.videoWidth;
-        tempCanvas.height = videoElement.videoHeight;
-        const tempCtx = tempCanvas.getContext('2d');
-        
-        // عكس الصورة لتطابق المرآة عند القص
-        tempCtx.translate(tempCanvas.width, 0);
-        tempCtx.scale(-1, 1);
-        tempCtx.drawImage(videoElement, 0, 0);
-        
-        puzzleImage = new Image();
-        puzzleImage.src = tempCanvas.toDataURL();
-        
-        puzzleImage.onload = () => {
-            generatePieces();
-            gameActive = true;
-            document.getElementById('capture-zone').style.display = 'none';
-            document.getElementById('status-text').innerText = "اللعبة بدأت! رتب القطع لتطابق الصورة";
-            document.querySelectorAll('.win-screen').forEach(el => el.style.display = 'none');
-        };
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.1);
     }
 
-    function generatePieces() {
-        pieces = [];
-        const pSize = size / grid;
-        for (let r = 0; r < grid; r++) {
-            for (let c = 0; c < grid; c++) {
-                pieces.push({
-                    id: r * grid + c,
-                    sx: c * (puzzleImage.width / grid),
-                    sy: r * (puzzleImage.height / grid),
-                    sw: puzzleImage.width / grid,
-                    sh: puzzleImage.height / grid,
-                    p1: { x: Math.random() * (size - pSize), y: Math.random() * (size - pSize) },
-                    p2: { x: Math.random() * (size - pSize), y: Math.random() * (size - pSize) },
-                    correctX: c * pSize,
-                    correctY: r * pSize
-                });
-            }
+    class Particle {
+        constructor(x, y, color, size) {
+            this.x = x; this.y = y;
+            this.size = size * (Math.random() * 0.5 + 0.5);
+            this.speedX = (Math.random() - 0.5) * 5;
+            this.speedY = (Math.random() - 0.5) * 5;
+            this.color = color;
+            this.life = 1.0;
+        }
+        update() {
+            this.x += this.speedX;
+            this.y += this.speedY;
+            this.life -= 0.02;
+            if (this.size > 0.2) this.size -= 0.1;
+        }
+        draw() {
+            canvasCtx.fillStyle = this.color.replace('opacity', this.life);
+            canvasCtx.beginPath();
+            canvasCtx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+            canvasCtx.fill();
         }
     }
 
     function onResults(results) {
-        ctx1.clearRect(0, 0, size, size);
-        ctx2.clearRect(0, 0, size, size);
-
-        // رسم القطع إذا كانت الصورة موجودة
-        if (puzzleImage) {
-            pieces.forEach(p => {
-                const ps = size / grid;
-                ctx1.drawImage(puzzleImage, p.sx, p.sy, p.sw, p.sh, p.p1.x, p.p1.y, ps, ps);
-                ctx2.drawImage(puzzleImage, p.sx, p.sy, p.sw, p.sh, p.p2.x, p.p2.y, ps, ps);
-            });
-        }
+        canvasElement.width = window.innerWidth;
+        canvasElement.height = window.innerHeight;
+        
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        
+        // رسم الكاميرا كخلفية
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
         if (results.multiHandLandmarks) {
             for (const landmarks of results.multiHandLandmarks) {
+                // 1. حساب المسافة بين الإبهام والسبابة (للحجم)
                 const thumb = landmarks[4];
-                const indexF = landmarks[8];
-                const dist = Math.hypot(thumb.x - indexF.x, thumb.y - indexF.y);
-                const isPinching = dist < 0.04;
-
-                // تحويل الإحداثيات (MediaPipe يعطي X معكوساً، لذا نستخدمه كما هو للمرآة)
-                const handX = thumb.x * size; 
-                const handY = thumb.y * size;
-
-                // تفعيل البداية باليد (لو كانت اليد في الربع العلوي من الكاميرا)
-                if (!gameActive && isPinching && thumb.y < 0.25) {
-                    startPuzzle();
-                }
-
-                if (!gameActive) continue;
-
-                // تحديد أي لاعب بناءً على موقع اليد في الكاميرا
-                const player = thumb.x < 0.5 ? "player1" : "player2";
-                const currentCtx = player === "player1" ? ctx1 : ctx2;
+                const index = landmarks[8];
+                const wrist = landmarks[0];
+                const middle = landmarks[12];
                 
-                // رسم مؤشر اليد (توهج أحمر عند المسك، أخضر عند التحويم)
-                currentCtx.fillStyle = isPinching ? "#ff4757" : "#2ed573";
-                currentCtx.shadowBlur = 15;
-                currentCtx.shadowColor = currentCtx.fillStyle;
-                currentCtx.beginPath();
-                currentCtx.arc(handX, handY, 10, 0, Math.PI * 2);
-                currentCtx.fill();
-                currentCtx.shadowBlur = 0;
+                const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
+                const effectSize = pinchDist * 500; // حجم المؤثر
 
-                if (isPinching) {
-                    if (!grabbedPiece[player]) {
-                        pieces.forEach(p => {
-                            const pos = p[player === "player1" ? "p1" : "p2"];
-                            const ps = size / grid;
-                            if (handX > pos.x && handX < pos.x + ps && handY > pos.y && handY < pos.y + ps) {
-                                grabbedPiece[player] = p;
-                            }
-                        });
-                    } else {
-                        const ps = size / grid;
-                        grabbedPiece[player][player === "player1" ? "p1" : "p2"] = {
-                            x: handX - ps / 2,
-                            y: handY - ps / 2
-                        };
-                    }
-                } else {
-                    grabbedPiece[player] = null;
+                // 2. حساب الدوران (زاوية المعصم بالنسبة للإصبع الأوسط) لتبديل العناصر
+                const angle = Math.atan2(middle.y - wrist.y, middle.x - wrist.x) * 180 / Math.PI;
+                if (Math.abs(angle - lastRotation) > 40) {
+                    const idx = elements.indexOf(currentElement);
+                    currentElement = elements[(idx + 1) % elements.length];
+                    modeText.innerText = `نمط العنصر: ${currentElement === 'fire' ? 'نار 🔥' : currentElement === 'water' ? 'ماء 💧' : 'هواء 💨'}`;
+                    lastRotation = angle;
                 }
+
+                // 3. توليد جسيمات عند كف اليد
+                const centerX = middle.x * canvasElement.width;
+                const centerY = middle.y * canvasElement.height;
+
+                let color;
+                if (currentElement === 'fire') color = `rgba(255, ${Math.random()*100}, 0, opacity)`;
+                else if (currentElement === 'water') color = `rgba(0, ${Math.random()*150+100}, 255, opacity)`;
+                else color = `rgba(200, 200, 200, opacity)`;
+
+                for (let i = 0; i < 5; i++) {
+                    particles.push(new Particle(centerX, centerY, color, effectSize));
+                }
+                
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                playEffectSound(currentElement, effectSize);
             }
         }
-        if (gameActive) checkWinner();
-    }
 
-    function checkWinner() {
-        const tolerance = 25;
-        let p1Status = pieces.every(p => Math.hypot(p.p1.x - p.correctX, p.p1.y - p.correctY) < tolerance);
-        let p2Status = pieces.every(p => Math.hypot(p.p2.x - p.correctX, p.p2.y - p.correctY) < tolerance);
+        // تحديث ورسم الجسيمات
+        particles = particles.filter(p => p.life > 0);
+        particles.forEach(p => {
+            p.update();
+            p.draw();
+        });
 
-        if (p1Status) { 
-            gameActive = false; 
-            document.getElementById('win1').style.display = 'flex';
-            document.getElementById('status-text').innerText = "انتهت اللعبة! فوز اللاعب 1";
-        }
-        if (p2Status) { 
-            gameActive = false; 
-            document.getElementById('win2').style.display = 'flex';
-            document.getElementById('status-text').innerText = "انتهت اللعبة! فوز اللاعب 2";
-        }
+        canvasCtx.restore();
     }
 
     const hands = new Hands({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
-
     hands.setOptions({
-        maxNumHands: 2,
+        maxNumHands: 1,
         modelComplexity: 1,
-        minDetectionConfidence: 0.6,
-        minTrackingConfidence: 0.6
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
     });
-
     hands.onResults(onResults);
 
     const camera = new Camera(videoElement, {
-        onFrame: async () => {
-            await hands.send({image: videoElement});
-        },
-        width: 640, height: 480
+        onFrame: async () => { await hands.send({image: videoElement}); },
+        width: 1280, height: 720
     });
     camera.start();
+
+    window.addEventListener('resize', () => {
+        canvasElement.width = window.innerWidth;
+        canvasElement.height = window.innerHeight;
+    });
 </script>
 </body>
 </html>
