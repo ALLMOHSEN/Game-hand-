@@ -2,31 +2,41 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>لوحة العناصر السحرية المتقدمة ✨</title>
+    <title>لوحة العناصر فائقة الدقة ✨</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
-        canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; transform: scaleX(-1); }
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; position: fixed; width: 100%; height: 100%; }
+        /* جعل الكاميرا والكانفاس يغطيان الشاشة بالكامل بدقة عالية */
+        #output_canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+            transform: scaleX(-1); /* وضع المرآة */
+        }
         video { display: none; }
+        
         #toolbar {
             position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
-            display: flex; gap: 20px; z-index: 20; background: rgba(0,0,0,0.6);
-            padding: 10px 25px; border-radius: 50px; border: 2px solid #fff;
+            display: flex; gap: 15px; z-index: 100; background: rgba(0,0,0,0.7);
+            padding: 10px 20px; border-radius: 50px; border: 2px solid rgba(255,255,255,0.5);
         }
-        .tool { font-size: 30px; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center; border-radius: 50%; transition: 0.3s; }
-        .active-tool { background: #fff; box-shadow: 0 0 20px #fff; transform: scale(1.1); }
+        .tool { font-size: 25px; width: 50px; height: 50px; display: flex; align-items: center; justify-content: center; border-radius: 50%; transition: 0.3s; color: white; cursor: pointer; }
+        .active-tool { background: #fff; box-shadow: 0 0 20px #fff; transform: scale(1.1); color: black; }
     </style>
 </head>
 <body>
 
 <div id="toolbar">
-    <div id="pen-tool" class="tool">✏️</div>
-    <div id="element-tool" class="tool active-tool">🪄</div>
     <div id="eraser-tool" class="tool">🧼</div>
+    <div id="element-tool" class="tool active-tool">🪄</div>
+    <div id="pen-tool" class="tool">✏️</div>
 </div>
 
-<video id="input_video"></video>
+<video id="input_video" playsinline></video>
 <canvas id="output_canvas"></canvas>
 
 <script>
@@ -34,18 +44,18 @@
     const canvasElement = document.getElementById('output_canvas');
     const ctx = canvasElement.getContext('2d');
 
-    // إنشاء كانفاس منفصل للرسم لكي لا نمسح الكاميرا
+    // لوحة رسم منفصلة
     const drawingCanvas = document.createElement('canvas');
     const dctx = drawingCanvas.getContext('2d');
 
     const elements = {
-        'fire': { src: 'Photoroom_20260309_185127.png', color: '255, 100, 0', freq: 440, img: new Image() },
-        'water': { src: 'Photoroom_20260309_185127.png', color: '0, 150, 255', freq: 660, img: new Image() },
-        'air': { src: 'Photoroom_20260309_185127.png', color: '200, 255, 200', freq: 880, img: new Image() }
+        'fire': { src: 'Photoroom_20260309_185127.png', color: '255, 100, 0', freq: 400, img: new Image() },
+        'water': { src: 'Photoroom_20260309_185127.png', color: '0, 150, 255', freq: 600, img: new Image() },
+        'air': { src: 'Photoroom_20260309_185127.png', color: '150, 255, 150', freq: 800, img: new Image() }
     };
     for (let k in elements) elements[k].img.src = elements[k].src;
 
-    let currentMode = 'element'; // element, pen, eraser
+    let currentMode = 'element'; 
     let hue = 0;
     const handStates = {};
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -55,51 +65,53 @@
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.connect(gain); gain.connect(audioCtx.destination);
-        osc.type = 'triangle';
+        osc.type = 'sine';
         osc.frequency.setValueAtTime(elements[type].freq, audioCtx.currentTime);
         gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
-        osc.start(); osc.stop(audioCtx.currentTime + 0.2);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+        osc.start(); osc.stop(audioCtx.currentTime + 0.1);
     }
 
     function onResults(results) {
-        if (drawingCanvas.width !== canvasElement.width) {
-            drawingCanvas.width = canvasElement.width = window.innerWidth;
-            drawingCanvas.height = canvasElement.height = window.innerHeight;
+        // تحديث مقاسات الكانفاس لتطابق نافذة المتصفح بدقة
+        if (canvasElement.width !== window.innerWidth) {
+            canvasElement.width = drawingCanvas.width = window.innerWidth;
+            canvasElement.height = drawingCanvas.height = window.innerHeight;
         }
 
         ctx.save();
         ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
         
-        // 1. رسم فيديو الكاميرا كخلفية (لن يتأثر بالممحاة الآن)
+        // رسم الكاميرا بدقة عالية (تغطية كاملة)
         ctx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
         if (results.multiHandLandmarks) {
             results.multiHandLandmarks.forEach((landmarks, index) => {
-                if (!handStates[index]) handStates[index] = { currentElement: 'fire', lastRot: 0, lastSnd: 0 };
+                if (!handStates[index]) handStates[index] = { currentElement: 'fire', lastRot: 0, lastX: null, lastY: null };
                 
                 const idxTip = landmarks[8];
                 const thmbTip = landmarks[4];
                 const wrist = landmarks[0];
                 const mid = landmarks[9];
 
+                // حساب الإحداثيات بدقة
                 const x = idxTip.x * canvasElement.width;
                 const y = idxTip.y * canvasElement.height;
                 const isPinching = Math.hypot(idxTip.x - thmbTip.x, idxTip.y - thmbTip.y) < 0.05;
 
-                // اختيار الأدوات
-                if (y < 100 && isPinching) {
-                    if (x > canvasElement.width * 0.6) currentMode = 'pen';
-                    else if (x < canvasElement.width * 0.4) currentMode = 'eraser';
+                // اختيار الأدوات (تم تعديل النطاق ليصبح أسهل)
+                if (y < 120 && isPinching) {
+                    if (x < canvasElement.width * 0.4) currentMode = 'eraser';
+                    else if (x > canvasElement.width * 0.6) currentMode = 'pen';
                     else currentMode = 'element';
                     
                     document.querySelectorAll('.tool').forEach(t => t.classList.remove('active-tool'));
                     document.getElementById(`${currentMode}-tool`).classList.add('active-tool');
                 }
 
-                // منطق تبديل العناصر (يعمل في كل الأنماط)
+                // تبديل العناصر عند دوران اليد
                 const rot = Math.atan2(mid.y - wrist.y, mid.x - wrist.x) * 180 / Math.PI;
-                if (Math.abs(rot - handStates[index].lastRot) > 50) {
+                if (Math.abs(rot - handStates[index].lastRot) > 60) {
                     const keys = Object.keys(elements);
                     const curIdx = keys.indexOf(handStates[index].currentElement);
                     handStates[index].currentElement = keys[(curIdx + 1) % keys.length];
@@ -109,35 +121,31 @@
 
                 const curEl = elements[handStates[index].currentElement];
 
-                // تنفيذ الرسم أو المسح على الكانفاس المنفصل
+                // الرسم والمسح
                 if (isPinching) {
                     dctx.lineCap = 'round';
-                    dctx.lineWidth = currentMode === 'eraser' ? 60 : 12;
+                    dctx.lineJoin = 'round';
                     
                     if (currentMode === 'pen') {
                         dctx.globalCompositeOperation = 'source-over';
                         dctx.strokeStyle = `hsl(${hue}, 100%, 50%)`;
-                        if (handStates[index].lastX) {
+                        dctx.lineWidth = 10;
+                        if (handStates[index].lastX !== null) {
                             dctx.beginPath();
                             dctx.moveTo(handStates[index].lastX, handStates[index].lastY);
                             dctx.lineTo(x, y);
                             dctx.stroke();
                         }
-                        hue = (hue + 3) % 360;
+                        hue = (hue + 2) % 360;
                     } else if (currentMode === 'eraser') {
                         dctx.globalCompositeOperation = 'destination-out';
-                        if (handStates[index].lastX) {
+                        dctx.lineWidth = 60;
+                        if (handStates[index].lastX !== null) {
                             dctx.beginPath();
                             dctx.moveTo(handStates[index].lastX, handStates[index].lastY);
                             dctx.lineTo(x, y);
                             dctx.stroke();
                         }
-                    }
-                    
-                    // صوت مستمر بسيط عند الرسم أو المسح
-                    if (Date.now() - handStates[index].lastSnd > 150) {
-                        playSound(handStates[index].currentElement);
-                        handStates[index].lastSnd = Date.now();
                     }
                     handStates[index].lastX = x;
                     handStates[index].lastY = y;
@@ -145,24 +153,29 @@
                     handStates[index].lastX = null;
                 }
 
-                // رسم شعار العنصر والجسيمات (دائماً تتبع اليد)
+                // رسم المؤثر البصري (PNG)
                 ctx.save();
                 ctx.translate(x, y - 60);
-                ctx.scale(-1, 1);
+                ctx.scale(-1, 1); // تصحيح اتجاه الصورة
                 ctx.shadowBlur = 20;
                 ctx.shadowColor = curEl.color;
-                if (curEl.img.complete) ctx.drawImage(curEl.img, -35, -35, 70, 70);
+                if (curEl.img.complete) ctx.drawImage(curEl.img, -40, -40, 80, 80);
                 ctx.restore();
             });
         }
 
-        // 2. دمج طبقة الرسم فوق الكاميرا
+        // دمج طبقة الرسم
         ctx.drawImage(drawingCanvas, 0, 0);
         ctx.restore();
     }
 
     const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+    hands.setOptions({ 
+        maxNumHands: 2, 
+        modelComplexity: 1, 
+        minDetectionConfidence: 0.7, 
+        minTrackingConfidence: 0.7 
+    });
     hands.onResults(onResults);
 
     const camera = new Camera(videoElement, {
@@ -170,6 +183,12 @@
         width: 1280, height: 720
     });
     camera.start();
+
+    // إصلاح مشكلة الحجم عند تدوير الشاشة أو تغيير حجم النافذة
+    window.addEventListener('resize', () => {
+        canvasElement.width = drawingCanvas.width = window.innerWidth;
+        canvasElement.height = drawingCanvas.height = window.innerHeight;
+    });
 </script>
 </body>
 </html>
