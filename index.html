@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>تحكم العناصر المتعدد - AR</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; transform: scaleX(-1); }
+        video { display: none; }
+        #ui {
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+            color: white; text-align: center; z-index: 10; pointer-events: none;
+            background: rgba(0,0,0,0.5); padding: 10px 20px; border-radius: 20px;
+        }
+        .hint { font-size: 14px; color: #aaa; margin-top: 5px; }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <div id="mode-text">نمط العناصر المتعددة ⚔️</div>
+    <div class="hint">يمكن لأكثر من شخص التحكم الآن | لف اليد لتغيير العنصر لكل يد بشكل مستقل</div>
+</div>
+
+<video id="input_video"></video>
+<canvas id="output_canvas"></canvas>
+
+<script>
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+
+    let particles = [];
+    const elements = ['fire', 'water', 'air'];
+    
+    // تخزين حالة كل يد بناءً على رقم تعريفها (Index)
+    const handStates = {};
+
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playEffectSound(type, size) {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        
+        osc.type = type === 'fire' ? 'sawtooth' : type === 'water' ? 'sine' : 'triangle';
+        osc.frequency.setValueAtTime(size * 5, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+        
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.1);
+    }
+
+    class Particle {
+        constructor(x, y, color, size) {
+            this.x = x; this.y = y;
+            this.size = size * (Math.random() * 0.5 + 0.5);
+            this.speedX = (Math.random() - 0.5) * 7;
+            this.speedY = (Math.random() - 0.5) * 7;
+            this.color = color;
+            this.life = 1.0;
+        }
+        update() {
+            this.x += this.speedX;
+            this.y += this.speedY;
+            this.life -= 0.03;
+            if (this.size > 0.1) this.size -= 0.1;
+        }
+        draw() {
+            canvasCtx.fillStyle = this.color.replace('opacity', this.life);
+            canvasCtx.beginPath();
+            canvasCtx.arc(this.x, this.y, Math.max(0, this.size), 0, Math.PI * 2);
+            canvasCtx.fill();
+        }
+    }
+
+    function onResults(results) {
+        canvasElement.width = window.innerWidth;
+        canvasElement.height = window.innerHeight;
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+        if (results.multiHandLandmarks) {
+            results.multiHandLandmarks.forEach((landmarks, index) => {
+                // تهيئة حالة اليد إذا كانت جديدة
+                if (!handStates[index]) {
+                    handStates[index] = { currentElement: 'fire', lastRotation: 0 };
+                }
+
+                const thumb = landmarks[4];
+                const indexFinger = landmarks[8];
+                const wrist = landmarks[0];
+                const middle = landmarks[12];
+                
+                const pinchDist = Math.hypot(thumb.x - indexFinger.x, thumb.y - indexFinger.y);
+                const effectSize = pinchDist * 600;
+
+                // تبديل العنصر لكل يد بشكل مستقل بناءً على الدوران
+                const angle = Math.atan2(middle.y - wrist.y, middle.x - wrist.x) * 180 / Math.PI;
+                if (Math.abs(angle - handStates[index].lastRotation) > 50) {
+                    const currentIdx = elements.indexOf(handStates[index].currentElement);
+                    handStates[index].currentElement = elements[(currentIdx + 1) % elements.length];
+                    handStates[index].lastRotation = angle;
+                }
+
+                const centerX = middle.x * canvasElement.width;
+                const centerY = middle.y * canvasElement.height;
+
+                let color;
+                const el = handStates[index].currentElement;
+                if (el === 'fire') color = `rgba(255, ${Math.random()*120}, 0, opacity)`;
+                else if (el === 'water') color = `rgba(0, ${Math.random()*150+100}, 255, opacity)`;
+                else color = `rgba(220, 220, 255, opacity)`;
+
+                for (let i = 0; i < 4; i++) {
+                    particles.push(new Particle(centerX, centerY, color, effectSize));
+                }
+                
+                playEffectSound(el, effectSize);
+            });
+        }
+
+        particles = particles.filter(p => p.life > 0);
+        particles.forEach(p => {
+            p.update();
+            p.draw();
+        });
+
+        canvasCtx.restore();
+    }
+
+    const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    // --- التعديل الجوهري هنا ---
+    hands.setOptions({
+        maxNumHands: 4, // يسمح الآن بـ 4 أيدٍ (يمكنك زيادتها)
+        modelComplexity: 1,
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
+    });
+
+    hands.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+        onFrame: async () => { await hands.send({image: videoElement}); },
+        width: 1280, height: 720
+    });
+    camera.start();
+
+    window.addEventListener('resize', () => {
+        canvasElement.width = window.innerWidth;
+        canvasElement.height = window.innerHeight;
+    });
+</script>
+</body>
+</html>
