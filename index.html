@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>مختبر العناصر والكواكب التفاعلي - AR</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <style>
+        :root { --panel-bg: rgba(0, 0, 0, 0.8); --accent: #00d2ff; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; }
+        canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; transform: scaleX(-1); }
+        video { display: none; }
+        
+        /* لوحة التحكم الجانبية */
+        #settings-panel {
+            position: absolute; right: 20px; top: 20px; width: 250px;
+            background: var(--panel-bg); border: 1px solid var(--accent);
+            padding: 15px; border-radius: 15px; z-index: 100; color: white;
+        }
+
+        .setting-group { margin-bottom: 15px; }
+        label { display: block; font-size: 14px; margin-bottom: 5px; color: var(--accent); }
+        select, input { width: 100%; background: #222; color: white; border: 1px solid #444; padding: 5px; border-radius: 5px; }
+        
+        #ui-top {
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+            color: white; text-align: center; z-index: 10; pointer-events: none;
+            background: rgba(0,0,0,0.6); padding: 10px 20px; border-radius: 30px; border: 1px solid rgba(255,255,255,0.2);
+        }
+    </style>
+</head>
+<body>
+
+<div id="ui-top">
+    <div id="mode-info">نظام العناصر المتعدد: جاهز</div>
+    <div style="font-size: 12px; color: #00d2ff;">المس السبابة بالإبهام لإطلاق القوة!</div>
+</div>
+
+<div id="settings-panel">
+    <h3 style="margin-top:0">إعدادات المؤثرات</h3>
+    <div class="setting-group">
+        <label>اختر العنصر/الكوكب</label>
+        <select id="element-select">
+            <option value="fire">نار 🔥</option>
+            <option value="water">ماء 💧</option>
+            <option value="air">هواء 💨</option>
+            <option value="earth">أرض 🌍</option>
+            <option value="mars">المريخ 🔴</option>
+            <option value="saturn">زحل 🪐</option>
+            <option value="name">كتابة اسمي ✍️</option>
+        </select>
+    </div>
+    <div class="setting-group" id="name-input-group" style="display:none;">
+        <label>اكتب اسمك هنا</label>
+        <input type="text" id="user-name" placeholder="اكتب اسمك..." maxlength="10">
+    </div>
+    <div class="setting-group">
+        <label>كثافة المؤثر</label>
+        <input type="range" id="density" min="1" max="20" value="5">
+    </div>
+</div>
+
+<video id="input_video"></video>
+<canvas id="output_canvas"></canvas>
+
+<script>
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const elementSelect = document.getElementById('element-select');
+    const nameInputGroup = document.getElementById('name-input-group');
+    const userNameInput = document.getElementById('user-name');
+
+    let particles = [];
+    
+    elementSelect.onchange = () => {
+        nameInputGroup.style.display = elementSelect.value === 'name' ? 'block' : 'none';
+    };
+
+    class Particle {
+        constructor(x, y, type, size, name = "") {
+            this.x = x; this.y = y;
+            this.type = type;
+            this.size = size * (Math.random() * 0.5 + 0.5);
+            this.speedX = (Math.random() - 0.5) * 6;
+            this.speedY = (Math.random() - 0.5) * 6;
+            this.life = 1.0;
+            this.name = name;
+            this.hue = Math.random() * 360;
+        }
+        update() {
+            this.x += this.speedX;
+            this.y += this.speedY;
+            this.life -= 0.015;
+        }
+        draw() {
+            canvasCtx.globalAlpha = this.life;
+            if (this.type === 'name') {
+                canvasCtx.fillStyle = `hsl(${this.hue}, 100%, 50%)`;
+                canvasCtx.font = `${this.size * 2}px Arial`;
+                canvasCtx.fillText(this.name, this.x, this.y);
+            } else if (this.type === 'mars' || this.type === 'earth' || this.type === 'saturn') {
+                canvasCtx.font = `${this.size * 2}px serif`;
+                const emoji = this.type === 'earth' ? '🌍' : this.type === 'mars' ? '🔴' : '🪐';
+                canvasCtx.fillText(emoji, this.x, this.y);
+            } else {
+                let color = this.type === 'fire' ? `rgb(255, 100, 0)` : this.type === 'water' ? `rgb(0, 150, 255)` : `rgb(200, 200, 200)`;
+                canvasCtx.fillStyle = color;
+                canvasCtx.beginPath();
+                canvasCtx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                canvasCtx.fill();
+            }
+        }
+    }
+
+    function onResults(results) {
+        canvasElement.width = window.innerWidth;
+        canvasElement.height = window.innerHeight;
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+        if (results.multiHandLandmarks) {
+            results.multiHandLandmarks.forEach((landmarks) => {
+                const thumb = landmarks[4];
+                const index = landmarks[8];
+                
+                // حساب النقطة المركزية بين السبابة والإبهام
+                const centerX = ((thumb.x + index.x) / 2) * canvasElement.width;
+                const centerY = ((thumb.y + index.y) / 2) * canvasElement.height;
+                
+                // حساب المسافة (القرص)
+                const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
+                const isPinching = pinchDist < 0.06;
+
+                if (isPinching) {
+                    const type = elementSelect.value;
+                    const density = document.getElementById('density').value;
+                    const name = userNameInput.value || "Gemini";
+                    
+                    for (let i = 0; i < density; i++) {
+                        particles.push(new Particle(centerX, centerY, type, pinchDist * 800, name));
+                    }
+                }
+            });
+        }
+
+        particles = particles.filter(p => p.life > 0);
+        particles.forEach(p => { p.update(); p.draw(); });
+        canvasCtx.restore();
+    }
+
+    const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+    hands.setOptions({ maxNumHands: 4, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    hands.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+        onFrame: async () => { await hands.send({image: videoElement}); },
+        width: 1280, height: 720
+    });
+    camera.start();
+</script>
+</body>
+</html>
