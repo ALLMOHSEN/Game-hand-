@@ -2,30 +2,30 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>الرسم السحري - نسخة الممحاة الاحترافية 🎨</title>
+    <title>✨</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Arial', sans-serif; }
         canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; transform: scaleX(-1); }
         video { display: none; }
-        #ui-layer {
-            position: absolute; top: 20px; width: 100%;
-            display: flex; justify-content: center; gap: 20px; z-index: 100;
+        #top-bar {
+            position: absolute; top: 10px; width: 100%; display: flex; 
+            justify-content: center; gap: 15px; z-index: 100; pointer-events: none;
         }
-        .tool-icon {
-            background: rgba(255, 255, 255, 0.2); backdrop-filter: blur(10px);
-            padding: 10px 20px; border-radius: 15px; font-size: 25px;
-            color: white; border: 2px solid #fff; pointer-events: none;
+        .mode-indicator {
+            background: rgba(255, 255, 255, 0.2); backdrop-filter: blur(8px);
+            padding: 8px 20px; border-radius: 30px; color: white;
+            border: 2px solid rgba(255,255,255,0.4); font-size: 18px;
         }
-        .active { border-color: #00f2ff; background: rgba(0, 242, 255, 0.3); }
     </style>
 </head>
 <body>
 
-<div id="ui-layer">
-    <div id="btn-pen" class="tool-icon">✏️ قلم RGB</div>
-    <div id="btn-eraser" class="tool-icon">🧽 ممحاة سحرية</div>
+<div id="top-bar">
+    <div class="mode-indicator">✏️ اقرص للرسم</div>
+    <div class="mode-indicator">🧽 المس الأعلى للتبديل</div>
+    <div class="mode-indicator">🔥 افتح يدك للعناصر</div>
 </div>
 
 <video id="input_video"></video>
@@ -36,9 +36,46 @@
     const canvasElement = document.getElementById('output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
 
-    let allPaths = []; 
-    let handStates = {}; 
+    let allPaths = [];
+    let particles = [];
+    const handStates = {};
     let hue = 0;
+
+    const elements = {
+        'fire': { color: '255, 100, 0', sound: 300 },
+        'water': { color: '0, 150, 255', sound: 500 },
+        'air': { color: '150, 255, 150', sound: 700 }
+    };
+
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playTone(freq, type = 'sine') {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.1);
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+    }
+
+    class Particle {
+        constructor(x, y, color) {
+            this.x = x; this.y = y;
+            this.size = Math.random() * 15 + 5;
+            this.speedX = (Math.random() - 0.5) * 8;
+            this.speedY = (Math.random() - 0.5) * 8;
+            this.color = color;
+            this.life = 1.0;
+        }
+        update() { this.x += this.speedX; this.y += this.speedY; this.life -= 0.03; }
+        draw() {
+            canvasCtx.fillStyle = `rgba(${this.color}, ${this.life})`;
+            canvasCtx.beginPath();
+            canvasCtx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+            canvasCtx.fill();
+        }
+    }
 
     function onResults(results) {
         canvasElement.width = window.innerWidth;
@@ -47,98 +84,111 @@
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
         canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
-        hue = (hue + 3) % 360;
-        const rainbowColor = `hsl(${hue}, 100%, 50%)`;
+        hue = (hue + 2) % 360;
+        const rainbow = `hsl(${hue}, 100%, 50%)`;
 
-        // رسم الخطوط
+        // رسم الخطوط المخزنة
         allPaths.forEach(path => {
-            if (path.points.length < 2) return;
             canvasCtx.beginPath();
             canvasCtx.strokeStyle = path.color;
-            canvasCtx.lineWidth = 10;
+            canvasCtx.lineWidth = 12;
             canvasCtx.lineCap = 'round';
             canvasCtx.lineJoin = 'round';
-            canvasCtx.moveTo(path.points[0].x, path.points[0].y);
-            for (let i = 1; i < path.points.length; i++) {
-                canvasCtx.lineTo(path.points[i].x, path.points[i].y);
+            if(path.points.length > 0) {
+                canvasCtx.moveTo(path.points[0].x, path.points[0].y);
+                path.points.forEach(p => canvasCtx.lineTo(p.x, p.y));
             }
             canvasCtx.stroke();
         });
 
         if (results.multiHandLandmarks) {
             results.multiHandLandmarks.forEach((landmarks, index) => {
-                const handId = index; 
+                const handId = index;
                 if (!handStates[handId]) {
-                    handStates[handId] = { mode: 'pen', isDrawing: false, lastPathIdx: -1 };
+                    handStates[handId] = { mode: 'pen', element: 'fire', isDrawing: false, lastPathIdx: -1 };
                 }
-
                 const state = handStates[handId];
-                const x = landmarks[8].x * canvasElement.width;
-                const y = landmarks[8].y * canvasElement.height;
-                const isPinching = Math.hypot(landmarks[4].x - landmarks[8].x, landmarks[4].y - landmarks[8].y) < 0.05;
+                
+                const indexTip = landmarks[8];
+                const thumbTip = landmarks[4];
+                const x = indexTip.x * canvasElement.width;
+                const y = indexTip.y * canvasElement.height;
+                const pinchDist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
+                const isPinching = pinchDist < 0.04;
 
-                // تحديث الواجهة
-                document.getElementById('btn-pen').classList.toggle('active', state.mode === 'pen');
-                document.getElementById('btn-eraser').classList.toggle('active', state.mode === 'eraser');
-
-                if (y < 100) {
-                    state.mode = (x < canvasElement.width / 2) ? 'pen' : 'eraser';
+                // التبديل عند لمس الحافة العلوية
+                if (y < 80) {
+                    const modes = ['pen', 'eraser', 'elements'];
+                    const newMode = modes[Math.floor((x / canvasElement.width) * 3)];
+                    if(state.mode !== newMode) {
+                        state.mode = newMode;
+                        playTone(1000, 'square');
+                    }
                 }
 
                 if (state.mode === 'pen') {
                     if (isPinching) {
                         if (!state.isDrawing) {
                             state.isDrawing = true;
-                            const newPath = { color: rainbowColor, points: [{x, y}] };
+                            const newPath = { color: rainbow, points: [{x, y}] };
                             allPaths.push(newPath);
                             state.lastPathIdx = allPaths.length - 1;
+                            playTone(440);
                         } else {
                             allPaths[state.lastPathIdx].points.push({x, y});
                         }
-                    } else {
-                        state.isDrawing = false;
-                    }
-                    canvasCtx.fillText("✏️", x - 15, y - 15);
+                    } else { state.isDrawing = false; }
+                    canvasCtx.fillText("✏️", x - 20, y - 20);
                 } 
-                
                 else if (state.mode === 'eraser') {
                     if (isPinching) {
-                        let newAllPaths = [];
+                        let splitPaths = [];
                         allPaths.forEach(path => {
-                            let currentSubPath = [];
+                            let currentSegment = [];
                             path.points.forEach(p => {
-                                // إذا كانت النقطة بعيدة عن الممحاة، أضفها للمسار الحالي
-                                if (Math.hypot(p.x - x, p.y - y) > 35) {
-                                    currentSubPath.push(p);
+                                if (Math.hypot(p.x - x, p.y - y) > 40) {
+                                    currentSegment.push(p);
                                 } else {
-                                    // إذا لمسنا نقطة، ننهي المسار الحالي ونبدأ واحداً جديداً (تقسيم الخط)
-                                    if (currentSubPath.length > 1) {
-                                        newAllPaths.push({ color: path.color, points: currentSubPath });
-                                    }
-                                    currentSubPath = [];
+                                    if (currentSegment.length > 1) splitPaths.push({color: path.color, points: currentSegment});
+                                    currentSegment = [];
                                 }
                             });
-                            if (currentSubPath.length > 1) {
-                                newAllPaths.push({ color: path.color, points: currentSubPath });
-                            }
+                            if (currentSegment.length > 1) splitPaths.push({color: path.color, points: currentSegment});
                         });
-                        allPaths = newAllPaths;
+                        allPaths = splitPaths;
+                        playTone(200, 'sawtooth');
                     }
-                    canvasCtx.fillText("🧽", x - 15, y - 15);
+                    canvasCtx.fillText("🧽", x - 20, y - 20);
+                } 
+                else if (state.mode === 'elements') {
+                    const eData = elements[state.element];
+                    if (!isPinching) { // تظهر العناصر فقط عند فتح اليد
+                        for(let i=0; i<3; i++) particles.push(new Particle(x, y, eData.color));
+                        if(Math.random() > 0.9) playTone(eData.sound, 'triangle');
+                    }
+                    // تبديل العنصر بالدوران
+                    const angle = Math.atan2(landmarks[9].y - landmarks[0].y, landmarks[9].x - landmarks[0].x);
+                    if (Math.abs(angle) < 0.5) state.element = 'water';
+                    else if (angle > 1) state.element = 'fire';
+                    else state.element = 'air';
                 }
             });
         }
+
+        particles = particles.filter(p => p.life > 0);
+        particles.forEach(p => { p.update(); p.draw(); });
         canvasCtx.restore();
     }
 
     const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.8 });
+    hands.setOptions({ maxNumHands: 10, modelComplexity: 1, minDetectionConfidence: 0.6 });
     hands.onResults(onResults);
 
-    new Camera(videoElement, {
+    const camera = new Camera(videoElement, {
         onFrame: async () => { await hands.send({image: videoElement}); },
         width: 1280, height: 720
-    }).start();
+    });
+    camera.start();
 </script>
 </body>
 </html>
