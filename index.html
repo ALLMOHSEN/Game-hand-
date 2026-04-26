@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>تحكم العناصر - شعارات PNG</title>
+    <title>تحكم العناصر للأطفال 🎈</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <style>
@@ -10,16 +10,19 @@
         canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; transform: scaleX(-1); }
         video { display: none; }
         #hint-overlay {
-            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
-            color: white; text-align: center; z-index: 10;
-            background: rgba(0,0,0,0.5); padding: 10px 20px; border-radius: 50px;
-            font-family: sans-serif; pointer-events: none;
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            color: #fff; text-align: center; z-index: 10;
+            background: linear-gradient(45deg, #ff0099, #493240); 
+            padding: 15px 30px; border-radius: 50px;
+            font-family: 'Comic Sans MS', cursive, sans-serif;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            pointer-events: none;
         }
     </style>
 </head>
 <body>
 
-<div id="hint-overlay">دور يدك لتبديل قوة العنصر ✨</div>
+<div id="hint-overlay">حرك يدك والعب بالألوان! ✨ 🎈</div>
 
 <video id="input_video"></video>
 <canvas id="output_canvas"></canvas>
@@ -29,38 +32,62 @@
     const canvasElement = document.getElementById('output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
 
-    // إعداد العناصر مع تحميل الصور
+    // إعداد الصور (تأكد من صحة اسم الملف)
     const elements = {
-        'fire': { src: 'Photoroom_20260309_185127.png', color: '255, 100, 0', img: new Image() },
-        'water': { src: 'Photoroom_20260309_185127.png', color: '0, 150, 255', img: new Image() },
-        'air': { src: 'Photoroom_20260309_185127.png', color: '200, 200, 255', img: new Image() }
+        'fire': { src: 'Photoroom_20260309_185127.png', color: '255, 150, 50', img: new Image() },
+        'water': { src: 'Photoroom_20260309_185127.png', color: '50, 200, 255', img: new Image() },
+        'air': { src: 'Photoroom_20260309_185127.png', color: '200, 255, 200', img: new Image() }
     };
 
-    // تحميل الصور مسبقاً
-    for (let key in elements) {
-        elements[key].img.src = elements[key].src;
-    }
+    for (let key in elements) { elements[key].img.src = elements[key].src; }
 
     let particles = [];
     const elementKeys = Object.keys(elements);
     const handStates = {};
 
+    // --- نظام أصوات الأطفال (نغمات مرحة) ---
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
+    function playKidSound(type) {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        
+        // نغمات مختلفة لكل عنصر (مثل أصوات ألعاب الفيديو)
+        const notes = { 'fire': 440, 'water': 660, 'air': 880 };
+        const freq = notes[type] || 440;
+
+        osc.type = 'triangle'; // صوت ناعم ومريح للأذن
+        osc.frequency.setValueAtTime(freq + (Math.random() * 100), audioCtx.currentTime);
+        
+        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+        
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.2);
+    }
+
     class Particle {
         constructor(x, y, color, size) {
             this.x = x; this.y = y;
-            this.size = size * (Math.random() * 0.5 + 0.5);
-            this.speedX = (Math.random() - 0.5) * 10;
-            this.speedY = (Math.random() - 0.5) * 10;
+            this.size = size * (Math.random() * 0.8 + 0.5);
+            this.speedX = (Math.random() - 0.5) * 12;
+            this.speedY = (Math.random() - 0.5) * 12;
             this.color = color;
             this.life = 1.0;
         }
         update() {
             this.x += this.speedX; this.y += this.speedY;
-            this.life -= 0.03;
+            this.life -= 0.02;
         }
         draw() {
             canvasCtx.fillStyle = `rgba(${this.color}, ${this.life})`;
             canvasCtx.beginPath();
+            // رسم دوائر تشبه الفقاعات
             canvasCtx.arc(this.x, this.y, Math.max(0, this.size), 0, Math.PI * 2);
             canvasCtx.fill();
         }
@@ -76,11 +103,11 @@
         if (results.multiHandLandmarks) {
             results.multiHandLandmarks.forEach((landmarks, index) => {
                 if (!handStates[index]) {
-                    handStates[index] = { currentElement: 'fire', lastRotation: 0 };
+                    handStates[index] = { currentElement: 'fire', lastRotation: 0, lastSoundTime: 0 };
                 }
 
-                const wrist = landmarks[0];
                 const middleRoot = landmarks[9];
+                const wrist = landmarks[0];
                 const thumbTip = landmarks[4];
                 const indexTip = landmarks[8];
                 
@@ -88,6 +115,7 @@
                 const effectSize = pinchDist * 500;
                 const angle = Math.atan2(middleRoot.y - wrist.y, middleRoot.x - wrist.x) * 180 / Math.PI;
 
+                // تبديل العنصر
                 if (Math.abs(angle - handStates[index].lastRotation) > 50) {
                     const currentIdx = elementKeys.indexOf(handStates[index].currentElement);
                     handStates[index].currentElement = elementKeys[(currentIdx + 1) % elementKeys.length];
@@ -98,24 +126,27 @@
                 const centerY = middleRoot.y * canvasElement.height;
                 const currentData = elements[handStates[index].currentElement];
 
-                // --- رسم صورة الـ PNG بدلاً من الايموجي ---
+                // رسم الصورة
                 if (currentData.img.complete) {
-                    const imgSize = 80; // حجم الشعار
                     canvasCtx.save();
-                    // نقل نقطة الرسم فوق اليد
                     canvasCtx.translate(centerX, centerY - 100);
-                    // عكس الصورة أفقياً لأن الكانفاس مقلوب (ScaleX -1)
                     canvasCtx.scale(-1, 1);
-                    // إضافة توهج خلف الصورة
-                    canvasCtx.shadowBlur = 20;
+                    canvasCtx.shadowBlur = 30;
                     canvasCtx.shadowColor = `rgb(${currentData.color})`;
-                    // رسم الصورة (توسيطها)
-                    canvasCtx.drawImage(currentData.img, -imgSize/2, -imgSize/2, imgSize, imgSize);
+                    canvasCtx.drawImage(currentData.img, -50, -50, 100, 100);
                     canvasCtx.restore();
                 }
 
+                // إطلاق الجسيمات
                 for (let i = 0; i < 5; i++) {
                     particles.push(new Particle(centerX, centerY, currentData.color, effectSize));
+                }
+
+                // تشغيل الصوت بتردد هادئ (مرة كل 150 ملي ثانية لكي لا يزعج الأطفال)
+                const now = Date.now();
+                if (now - handStates[index].lastSoundTime > 150 && effectSize > 20) {
+                    playKidSound(handStates[index].currentElement);
+                    handStates[index].lastSoundTime = now;
                 }
             });
         }
@@ -132,8 +163,8 @@
     hands.setOptions({
         maxNumHands: 4,
         modelComplexity: 1,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
     });
 
     hands.onResults(onResults);
