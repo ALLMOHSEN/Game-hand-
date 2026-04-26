@@ -2,41 +2,31 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>مختبر العناصر السحري 🎈✨</title>
+    <title>مختبر العناصر السحري - نسخة السبابة 🪄</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', Tahoma, sans-serif; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
         canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; transform: scaleX(-1); }
         video { display: none; }
-        
-        /* أيقونات التحكم في الأعلى */
         #toolbar {
             position: absolute; top: 20px; width: 100%;
-            display: flex; justify-content: center; gap: 20px;
-            z-index: 100; pointer-events: none;
+            display: flex; justify-content: center; gap: 15px; z-index: 100;
         }
         .icon-box {
-            background: rgba(255, 255, 255, 0.15);
-            backdrop-filter: blur(10px);
-            padding: 12px 25px; border-radius: 20px;
-            border: 2px solid rgba(255,255,255,0.3);
-            color: white; font-size: 22px; transition: 0.3s;
-            display: flex; align-items: center; gap: 10px;
+            background: rgba(255, 255, 255, 0.2); backdrop-filter: blur(15px);
+            padding: 12px 25px; border-radius: 50px; border: 2px solid #fff;
+            color: white; font-size: 20px; transition: 0.3s;
         }
-        .active-mode {
-            background: rgba(0, 242, 255, 0.3);
-            border-color: #00f2ff; transform: scale(1.1);
-            box-shadow: 0 0 15px rgba(0, 242, 255, 0.4);
-        }
+        .active { background: #00f2ff; border-color: #fff; transform: scale(1.1); color: #000; }
     </style>
 </head>
 <body>
 
 <div id="toolbar">
-    <div id="mode-pen" class="icon-box">✏️ <span>قلم</span></div>
-    <div id="mode-eraser" class="icon-box">🧽 <span>ممحاة</span></div>
-    <div id="mode-elements" class="icon-box">🔥 <span>عناصر</span></div>
+    <div id="btn-pen" class="icon-box">✏️ قلم</div>
+    <div id="btn-eraser" class="icon-box">🧽 ممحاة</div>
+    <div id="btn-elem" class="icon-box">🔥 عناصر</div>
 </div>
 
 <video id="input_video"></video>
@@ -48,117 +38,116 @@
     const canvasCtx = canvasElement.getContext('2d');
 
     let allPaths = [];
-    let particles = [];
-    const handStates = {};
-    let hueCycle = 0;
+    let handStates = {};
+    let hue = 0;
 
-    const elementsCfg = {
-        'fire': { color: '255, 80, 0', glow: '#ff5000' },
-        'water': { color: '0, 150, 255', glow: '#0096ff' },
-        'air': { color: '150, 255, 150', glow: '#96ff96' }
-    };
+    // نظام الصوت الموسيقي
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    let audioCtx;
+    
+    function initAudio() {
+        if (!audioCtx) audioCtx = new AudioContext();
+    }
+
+    function playSound(f) {
+        if (!audioCtx) return;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(f, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.4);
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.start(); osc.stop(audioCtx.currentTime + 0.4);
+    }
 
     function onResults(results) {
+        initAudio(); // تفعيل الصوت عند أول حركة
         canvasElement.width = window.innerWidth;
         canvasElement.height = window.innerHeight;
         canvasCtx.save();
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
         canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
-        hueCycle = (hueCycle + 2) % 360;
+        hue = (hue + 2) % 360;
 
-        // رسم الخطوط
+        // رسم الخطوط المخزنة
         allPaths.forEach(path => {
+            if (path.points.length < 2) return;
             canvasCtx.beginPath();
             canvasCtx.strokeStyle = path.color;
-            canvasCtx.lineWidth = 12;
+            canvasCtx.lineWidth = 10;
             canvasCtx.lineCap = 'round';
-            canvasCtx.lineJoin = 'round';
-            if(path.points.length > 1) {
-                canvasCtx.moveTo(path.points[0].x, path.points[0].y);
-                path.points.forEach(p => canvasCtx.lineTo(p.x, p.y));
-                canvasCtx.stroke();
-            }
+            canvasCtx.moveTo(path.points[0].x, path.points[0].y);
+            path.points.forEach(p => canvasCtx.lineTo(p.x, p.y));
+            canvasCtx.stroke();
         });
 
         if (results.multiHandLandmarks) {
             results.multiHandLandmarks.forEach((landmarks, index) => {
-                if (!handStates[index]) {
-                    handStates[index] = { mode: 'elements', currentElem: 'fire', isDrawing: false };
-                }
+                if (!handStates[index]) handStates[index] = { mode: 'elem', lastSound: 0 };
                 const state = handStates[index];
-                const x = landmarks[9].x * canvasElement.width;
-                const y = landmarks[9].y * canvasElement.height;
 
-                // حساب مدى انفتاح اليد (المسافة بين الإبهام والخنصر)
+                const tip = landmarks[8]; // رأس السبابة
+                const x = tip.x * canvasElement.width;
+                const y = tip.y * canvasElement.height;
+                
+                // حساب انفتاح اليد (لتحجيم العناصر)
                 const openness = Math.hypot(landmarks[4].x - landmarks[20].x, landmarks[4].y - landmarks[20].y);
-                const dynamicRadius = openness * 400; // حجم المؤثر يعتمد على فتح اليد
+                const size = openness * 350;
 
-                // تحديث الأيقونات في الواجهة
-                document.getElementById('mode-pen').classList.toggle('active-mode', state.mode === 'pen');
-                document.getElementById('mode-eraser').classList.toggle('active-mode', state.mode === 'eraser');
-                document.getElementById('mode-elements').classList.toggle('active-mode', state.mode === 'elements');
-
-                // التبديل عند لمس الأيقونات
+                // تغيير الوضع بواسطة السبابة في الأعلى
                 if (y < 100) {
-                    if (x < canvasElement.width * 0.4) state.mode = 'pen';
-                    else if (x > canvasElement.width * 0.6) state.mode = 'elements';
+                    if (x < canvasElement.width * 0.35) state.mode = 'pen';
+                    else if (x > canvasElement.width * 0.65) state.mode = 'elem';
                     else state.mode = 'eraser';
                 }
 
-                if (state.mode === 'elements') {
-                    const cfg = elementsCfg[state.currentElem];
-                    
-                    // رسم توهج العناصر في وسط اليد (يكبر ويصغر)
-                    const grad = canvasCtx.createRadialGradient(x, y, 0, x, y, dynamicRadius);
-                    grad.addColorStop(0, `rgba(${cfg.color}, 0.8)`);
-                    grad.addColorStop(1, `rgba(${cfg.color}, 0)`);
+                // تحديث الألوان في الأيقونات
+                document.getElementById('btn-pen').className = 'icon-box ' + (state.mode === 'pen' ? 'active' : '');
+                document.getElementById('btn-eraser').className = 'icon-box ' + (state.mode === 'eraser' ? 'active' : '');
+                document.getElementById('btn-elem').className = 'icon-box ' + (state.mode === 'elem' ? 'active' : '');
+
+                if (state.mode === 'elem') {
+                    // رسم كرة الطاقة (تظهر الآن بشكل مؤكد)
+                    const grad = canvasCtx.createRadialGradient(x, y, 0, x, y, size);
+                    grad.addColorStop(0, 'rgba(255, 100, 0, 0.9)'); // لون النار كمثال
+                    grad.addColorStop(0.5, 'rgba(255, 50, 0, 0.4)');
+                    grad.addColorStop(1, 'rgba(255, 0, 0, 0)');
                     
                     canvasCtx.fillStyle = grad;
                     canvasCtx.beginPath();
-                    canvasCtx.arc(x, y, dynamicRadius, 0, Math.PI * 2);
+                    canvasCtx.arc(x, y, size, 0, Math.PI * 2);
                     canvasCtx.fill();
 
-                    // تبديل النوع عند إمالة اليد يميناً ويساراً
-                    const tilt = landmarks[9].x - landmarks[0].x;
-                    if (tilt > 0.06) state.currentElem = 'fire';
-                    else if (tilt < -0.06) state.currentElem = 'water';
-                    else state.currentElem = 'air';
-
+                    if (size > 50 && Date.now() - state.lastSound > 400) {
+                        playSound(300 + size);
+                        state.lastSound = Date.now();
+                    }
                 } else {
                     const isPinching = Math.hypot(landmarks[8].x - landmarks[4].x, landmarks[8].y - landmarks[4].y) < 0.04;
-                    const tipX = landmarks[8].x * canvasElement.width;
-                    const tipY = landmarks[8].y * canvasElement.height;
-
+                    
                     if (state.mode === 'pen') {
                         if (isPinching) {
-                            if (!state.isDrawing) {
-                                state.isDrawing = true;
-                                allPaths.push({ color: `hsl(${hueCycle}, 100%, 50%)`, points: [{x: tipX, y: tipY}] });
+                            if (!state.drawing) {
+                                state.drawing = true;
+                                allPaths.push({ color: `hsl(${hue}, 100%, 50%)`, points: [{x, y}] });
                                 state.pathIdx = allPaths.length - 1;
+                                playSound(600);
                             } else {
-                                allPaths[state.pathIdx].points.push({x: tipX, y: tipY});
+                                allPaths[state.pathIdx].points.push({x, y});
                             }
-                        } else state.isDrawing = false;
-                        canvasCtx.fillText("✏️", tipX - 20, tipY - 20);
+                        } else state.drawing = false;
+                        canvasCtx.fillText("✏️", x - 20, y - 20);
                     } 
                     else if (state.mode === 'eraser') {
                         if (isPinching) {
-                            let newPaths = [];
                             allPaths.forEach(path => {
-                                let sub = [];
-                                path.points.forEach(p => {
-                                    if (Math.hypot(p.x - tipX, p.y - tipY) > 40) sub.push(p);
-                                    else {
-                                        if (sub.length > 1) newPaths.push({color: path.color, points: sub});
-                                        sub = [];
-                                    }
-                                });
-                                if (sub.length > 1) newPaths.push({color: path.color, points: sub});
+                                path.points = path.points.filter(p => Math.hypot(p.x - x, p.y - y) > 40);
                             });
-                            allPaths = newPaths;
+                            allPaths = allPaths.filter(p => p.points.length > 1);
                         }
-                        canvasCtx.fillText("🧽", tipX - 20, tipY - 20);
+                        canvasCtx.fillText("🧽", x - 20, y - 20);
                     }
                 }
             });
@@ -167,7 +156,7 @@
     }
 
     const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-    hands.setOptions({ maxNumHands: 10, modelComplexity: 1, minDetectionConfidence: 0.75 });
+    hands.setOptions({ maxNumHands: 10, modelComplexity: 1, minDetectionConfidence: 0.7 });
     hands.onResults(onResults);
 
     new Camera(videoElement, {
