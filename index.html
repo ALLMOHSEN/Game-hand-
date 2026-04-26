@@ -1,222 +1,273 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ar" dir="rtl">
 <head>
-<meta charset="UTF-8">
-<title>AR Planet Pro</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تحدي أحجية اليدين - لاعبين</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 
-<style>
-body { margin:0; overflow:hidden; }
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #1a1a1a;
+            color: white;
+            font-family: sans-serif;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 100-vh;
+        }
 
-/* الكاميرا */
-video {
-  position:fixed;
-  top:0;
-  left:0;
-  width:100%;
-  height:100%;
-  object-fit:cover;
-  z-index:0;
-  transform: scaleX(-1); /* تصحيح الكاميرا */
-}
+        #container {
+            display: flex;
+            flex: 1;
+            position: relative;
+        }
 
-/* 3D */
-canvas {
-  position:fixed;
-  top:0;
-  left:0;
-  z-index:1;
-}
+        .player-side {
+            flex: 1;
+            border: 2px solid #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
 
-/* UI */
-#label {
-  position:absolute;
-  top:20px;
-  left:20px;
-  color:white;
-  z-index:2;
-  font-family:Arial;
-}
-</style>
+        #p1-side { border-left: 2px solid #ff4757; }
+        #p2-side { border-right: 2px solid #2ed573; }
+
+        canvas {
+            max-width: 90%;
+            background: #000;
+            border-radius: 8px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        #video-container {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 200px;
+            height: 150px;
+            border: 2px solid #fff;
+            z-index: 10;
+            background: #000;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .controls {
+            padding: 10px;
+            text-align: center;
+            background: #222;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 18px;
+            cursor: pointer;
+            background: #ff4757;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+
+        .status {
+            position: absolute;
+            top: 20px;
+            font-weight: bold;
+            font-size: 24px;
+        }
+    </style>
 </head>
-
 <body>
 
-<video id="video" autoplay playsinline></video>
-<div id="label">Planet: Earth</div>
+<div class="controls">
+    <button onclick="startGame()">التقط الصورة وابدأ التحدي!</button>
+    <div id="game-status">بانتظار الكاميرا...</div>
+</div>
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.158/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<div id="container">
+    <div id="p1-side" class="player-side">
+        <div class="status">لاعب 1 (يسار)</div>
+        <canvas id="canvas1"></canvas>
+    </div>
+    
+    <div id="p2-side" class="player-side">
+        <div class="status">لاعب 2 (يمين)</div>
+        <canvas id="canvas2"></canvas>
+    </div>
+
+    <div id="video-container">
+        <video id="input_video"></video>
+        <canvas id="debug_canvas" style="display:none"></canvas>
+    </div>
+</div>
 
 <script>
-// ====== THREE ======
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 1000);
-camera.position.z = 3;
+    const videoElement = document.getElementById('input_video');
+    const canvas1 = document.getElementById('canvas1');
+    const canvas2 = document.getElementById('canvas2');
+    const ctx1 = canvas1.getContext('2d');
+    const ctx2 = canvas2.getContext('2d');
 
-const renderer = new THREE.WebGLRenderer({alpha:true, antialias:true});
-renderer.setSize(innerWidth, innerHeight);
-document.body.appendChild(renderer.domElement);
+    let pieces = [];
+    let gameActive = false;
+    let grabbedPiece = { player1: null, player2: null };
+    let puzzleImage = null;
 
-// اضاءة
-scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-const light = new THREE.PointLight(0xffffff, 2);
-light.position.set(5,5,5);
-scene.add(light);
+    // إعدادات الأحجية
+    const grid = 3;
+    const size = 300;
+    canvas1.width = canvas2.width = size;
+    canvas1.height = canvas2.height = size;
 
-// ====== PLANETS ======
-const loader = new THREE.TextureLoader();
-
-const planets = [
-  {name:"Mercury", tex:"https://threejs.org/examples/textures/planets/mercury.jpg"},
-  {name:"Venus", tex:"https://threejs.org/examples/textures/planets/venus.jpg"},
-  {name:"Earth", tex:"https://threejs.org/examples/textures/planets/earth_atmos_2048.jpg"},
-  {name:"Mars", tex:"https://threejs.org/examples/textures/planets/mars_1k_color.jpg"},
-  {name:"Jupiter", tex:"https://threejs.org/examples/textures/planets/jupiter.jpg"},
-  {name:"Saturn", tex:"https://threejs.org/examples/textures/planets/saturn.jpg"},
-  {name:"Uranus", tex:"https://threejs.org/examples/textures/planets/uranus.jpg"},
-  {name:"Neptune", tex:"https://threejs.org/examples/textures/planets/neptune.jpg"}
-];
-
-let index = 2;
-
-const geo = new THREE.SphereGeometry(0.6,64,64);
-const mat = new THREE.MeshStandardMaterial({
-  map: loader.load(planets[index].tex)
-});
-const planet = new THREE.Mesh(geo,mat);
-scene.add(planet);
-
-// ====== PARTICLES ======
-const count = 1500;
-const arr = new Float32Array(count*3);
-
-const pGeo = new THREE.BufferGeometry();
-pGeo.setAttribute('position', new THREE.BufferAttribute(arr,3));
-
-const pMat = new THREE.PointsMaterial({size:0.04, color:0xff6600});
-const particles = new THREE.Points(pGeo,pMat);
-scene.add(particles);
-
-// ====== STATES ======
-let grab = false;
-let explode = false;
-let lastX = 0;
-
-// ====== FUNCTIONS ======
-function changePlanet(dir){
-  index += dir;
-  if(index < 0) index = planets.length-1;
-  if(index >= planets.length) index = 0;
-
-  mat.map = loader.load(planets[index].tex);
-  mat.needsUpdate = true;
-
-  document.getElementById("label").innerText =
-    "Planet: " + planets[index].name;
-}
-
-// ====== CAMERA ======
-const video = document.getElementById("video");
-navigator.mediaDevices.getUserMedia({video:true})
-.then(stream => video.srcObject = stream);
-
-// ====== MEDIAPIPE ======
-const hands = new Hands({
-  locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-});
-
-hands.setOptions({
-  maxNumHands:1,
-  minDetectionConfidence:0.7,
-  minTrackingConfidence:0.7
-});
-
-// ====== HELPERS ======
-function distance(a,b){
-  return Math.sqrt(
-    Math.pow(a.x - b.x,2) +
-    Math.pow(a.y - b.y,2)
-  );
-}
-
-function isPinch(hand){
-  return distance(hand[4], hand[8]) < 0.05;
-}
-
-function isOpen(hand){
-  return hand[8].y < hand[6].y;
-}
-
-// ====== RESULTS ======
-hands.onResults(results=>{
-  if(results.multiHandLandmarks.length > 0){
-
-    const hand = results.multiHandLandmarks[0];
-
-    let x = 1 - hand[8].x; // تصحيح الاتجاه
-    let y = hand[8].y;
-
-    grab = isPinch(hand);
-    explode = isOpen(hand) && !grab;
-
-    // تحريك عند المسك
-    if(grab){
-      planet.position.x = (x - 0.5) * 3;
-      planet.position.y = -(y - 0.5) * 2;
-      particles.position.copy(planet.position);
+    function startGame() {
+        // التقاط فريم من الفيديو كصورة للعبة
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = videoElement.videoWidth;
+        tempCanvas.height = videoElement.videoHeight;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.drawImage(videoElement, 0, 0);
+        
+        puzzleImage = new Image();
+        puzzleImage.src = tempCanvas.toDataURL();
+        
+        puzzleImage.onload = () => {
+            initPuzzle();
+            gameActive = true;
+            document.getElementById('game-status').innerText = "اللعبة بدأت! استعمل يدك للتحريك";
+        };
     }
 
-    // تبديل
-    if(Math.abs(x - lastX) > 0.2 && !grab){
-      if(x > lastX) changePlanet(1);
-      else changePlanet(-1);
-      lastX = x;
+    function initPuzzle() {
+        pieces = [];
+        const pSize = size / grid;
+        for (let r = 0; r < grid; r++) {
+            for (let c = 0; c < grid; c++) {
+                const piece = {
+                    id: r * grid + c,
+                    sx: c * (puzzleImage.width / grid),
+                    sy: r * (puzzleImage.height / grid),
+                    sw: puzzleImage.width / grid,
+                    sh: puzzleImage.height / grid,
+                    // مواقع عشوائية للاعبين
+                    p1: { x: Math.random() * (size - pSize), y: Math.random() * (size - pSize) },
+                    p2: { x: Math.random() * (size - pSize), y: Math.random() * (size - pSize) },
+                    correctX: c * pSize,
+                    correctY: r * pSize
+                };
+                pieces.push(piece);
+            }
+        }
     }
 
-  }
-});
+    function onResults(results) {
+        if (!gameActive) return;
 
-// تشغيل الكامرة
-const cam = new Camera(video,{
-  onFrame: async ()=> await hands.send({image:video}),
-  width:640,
-  height:480
-});
-cam.start();
+        // مسح الكانفاس للرسم الجديد
+        ctx1.clearRect(0, 0, size, size);
+        ctx2.clearRect(0, 0, size, size);
 
-// ====== ANIMATION ======
-function animate(){
-  requestAnimationFrame(animate);
+        // رسم القطع
+        pieces.forEach(p => {
+            const pSize = size / grid;
+            // رسم للاعب 1
+            ctx1.drawImage(puzzleImage, p.sx, p.sy, p.sw, p.sh, p.p1.x, p.p1.y, pSize, pSize);
+            // رسم للاعب 2
+            ctx2.drawImage(puzzleImage, p.sx, p.sy, p.sw, p.sh, p.p2.x, p.p2.y, pSize, pSize);
+        });
 
-  planet.rotation.y += 0.01;
+        if (results.multiHandLandmarks) {
+            results.multiHandLandmarks.forEach((landmarks, index) => {
+                const thumb = landmarks[4];
+                const indexF = landmarks[8];
+                
+                // حساب المسافة بين الإبهام والسبابة (Pinch)
+                const dist = Math.hypot(thumb.x - indexF.x, thumb.y - indexF.y);
+                const isPinching = dist < 0.05;
 
-  if(explode){
-    planet.scale.set(0.3,0.3,0.3);
+                // تحويل إحداثيات MediaPipe (0-1) إلى بكسل الكانفاس
+                // ملاحظة: قمنا بعكس X لأن الكاميرا تظهر كمرآة
+                const handX = (1 - indexF.x) * size; 
+                const handY = indexF.y * size;
 
-    const pos = pGeo.attributes.position.array;
-    for(let i=0;i<count;i++){
-      pos[i*3] += (Math.random()-0.5)*0.1;
-      pos[i*3+1] += (Math.random()-0.5)*0.1;
-      pos[i*3+2] += (Math.random()-0.5)*0.1;
+                // تحديد اللاعب (يسار الكاميرا هو يمين الشاشة والعكس)
+                const player = indexF.x > 0.5 ? "player1" : "player2";
+                const currentCtx = player === "player1" ? ctx1 : ctx2;
+
+                // رسم مؤشر لليد
+                currentCtx.fillStyle = isPinching ? "red" : "yellow";
+                currentCtx.beginPath();
+                currentCtx.arc(handX, handY, 10, 0, Math.PI * 2);
+                currentCtx.fill();
+
+                if (isPinching) {
+                    if (!grabbedPiece[player]) {
+                        // محاولة إمساك قطعة
+                        pieces.forEach(p => {
+                            const pos = p[player === "player1" ? "p1" : "p2"];
+                            if (handX > pos.x && handX < pos.x + (size/grid) && 
+                                handY > pos.y && handY < pos.y + (size/grid)) {
+                                grabbedPiece[player] = p;
+                            }
+                        });
+                    } else {
+                        // تحريك القطعة الممسوكة
+                        const pSize = size / grid;
+                        grabbedPiece[player][player === "player1" ? "p1" : "p2"] = {
+                            x: handX - pSize / 2,
+                            y: handY - pSize / 2
+                        };
+                    }
+                } else {
+                    grabbedPiece[player] = null;
+                }
+            });
+        }
+        checkWin();
     }
-    pGeo.attributes.position.needsUpdate = true;
 
-  } else {
-    planet.scale.lerp(new THREE.Vector3(1,1,1),0.1);
+    function checkWin() {
+        const threshold = 20;
+        let p1Win = pieces.every(p => Math.hypot(p.p1.x - p.correctX, p.p1.y - p.correctY) < threshold);
+        let p2Win = pieces.every(p => Math.hypot(p.p2.x - p.correctX, p.p2.y - p.correctY) < threshold);
 
-    const pos = pGeo.attributes.position.array;
-    for(let i=0;i<count;i++){
-      pos[i*3] *= 0.9;
-      pos[i*3+1] *= 0.9;
-      pos[i*3+2] *= 0.9;
+        if (p1Win || p2Win) {
+            gameActive = false;
+            alert(p1Win ? "مبروك للاعب 1 الفوز!" : "مبروك للاعب 2 الفوز!");
+        }
     }
-    pGeo.attributes.position.needsUpdate = true;
-  }
 
-  renderer.render(scene,camera);
-}
-animate();
+    const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+    });
+
+    hands.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+        onFrame: async () => {
+            await hands.send({image: videoElement});
+        },
+        width: 640,
+        height: 480
+    });
+    camera.start();
 
 </script>
 </body>
