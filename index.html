@@ -2,25 +2,24 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>تحكم العناصر - شعارات ذكية</title>
+    <title>تحكم العناصر - شعارات PNG</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { margin: 0; overflow: hidden; background: #000; }
         canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; transform: scaleX(-1); }
         video { display: none; }
-        /* إخفاء واجهة المستخدم القديمة وجعلها بسيطة */
         #hint-overlay {
             position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
-            color: rgba(255,255,255,0.7); text-align: center; z-index: 10;
-            background: rgba(0,0,0,0.3); padding: 8px 15px; border-radius: 50px;
-            font-size: 13px; pointer-events: none; border: 1px solid rgba(255,255,255,0.1);
+            color: white; text-align: center; z-index: 10;
+            background: rgba(0,0,0,0.5); padding: 10px 20px; border-radius: 50px;
+            font-family: sans-serif; pointer-events: none;
         }
     </style>
 </head>
 <body>
 
-<div id="hint-overlay">قم بتدوير يدك لتغيير شعار العنصر 🔥 💧 💨</div>
+<div id="hint-overlay">دور يدك لتبديل قوة العنصر ✨</div>
 
 <video id="input_video"></video>
 <canvas id="output_canvas"></canvas>
@@ -30,41 +29,34 @@
     const canvasElement = document.getElementById('output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
 
-    let particles = [];
+    // إعداد العناصر مع تحميل الصور
     const elements = {
-        'fire': { emoji: 'Photoroom_20260309_185127.png', color: '255, 100, 0' },
-        'water': { emoji: 'Photoroom_20260309_185127.png', color: '0, 150, 255' },
-        'air': { emoji: 'Photoroom_20260309_185127.png', color: '200, 200, 255' }
+        'fire': { src: 'Photoroom_20260309_185127.png', color: '255, 100, 0', img: new Image() },
+        'water': { src: 'Photoroom_20260309_185127.png', color: '0, 150, 255', img: new Image() },
+        'air': { src: 'Photoroom_20260309_185127.png', color: '200, 200, 255', img: new Image() }
     };
+
+    // تحميل الصور مسبقاً
+    for (let key in elements) {
+        elements[key].img.src = elements[key].src;
+    }
+
+    let particles = [];
     const elementKeys = Object.keys(elements);
     const handStates = {};
-
-    // نظام الصوت
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    function playEffectSound(type, size) {
-        if (audioCtx.state === 'suspended') audioCtx.resume();
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.connect(gain); gain.connect(audioCtx.destination);
-        osc.type = type === 'fire' ? 'sawtooth' : type === 'water' ? 'sine' : 'triangle';
-        osc.frequency.setValueAtTime(size * 4, audioCtx.currentTime);
-        gain.gain.setValueAtTime(0.03, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
-        osc.start(); osc.stop(audioCtx.currentTime + 0.1);
-    }
 
     class Particle {
         constructor(x, y, color, size) {
             this.x = x; this.y = y;
-            this.size = size * (Math.random() * 0.6 + 0.4);
-            this.speedX = (Math.random() - 0.5) * 8;
-            this.speedY = (Math.random() - 0.5) * 8;
+            this.size = size * (Math.random() * 0.5 + 0.5);
+            this.speedX = (Math.random() - 0.5) * 10;
+            this.speedY = (Math.random() - 0.5) * 10;
             this.color = color;
             this.life = 1.0;
         }
         update() {
             this.x += this.speedX; this.y += this.speedY;
-            this.life -= 0.025;
+            this.life -= 0.03;
         }
         draw() {
             canvasCtx.fillStyle = `rgba(${this.color}, ${this.life})`;
@@ -79,8 +71,6 @@
         canvasElement.height = window.innerHeight;
         canvasCtx.save();
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-        
-        // رسم الكاميرا
         canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
         if (results.multiHandLandmarks) {
@@ -94,13 +84,11 @@
                 const thumbTip = landmarks[4];
                 const indexTip = landmarks[8];
                 
-                // حساب الحجم والدوران
                 const pinchDist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
-                const effectSize = pinchDist * 550;
+                const effectSize = pinchDist * 500;
                 const angle = Math.atan2(middleRoot.y - wrist.y, middleRoot.x - wrist.x) * 180 / Math.PI;
 
-                // تغيير العنصر عند لف اليد
-                if (Math.abs(angle - handStates[index].lastRotation) > 45) {
+                if (Math.abs(angle - handStates[index].lastRotation) > 50) {
                     const currentIdx = elementKeys.indexOf(handStates[index].currentElement);
                     handStates[index].currentElement = elementKeys[(currentIdx + 1) % elementKeys.length];
                     handStates[index].lastRotation = angle;
@@ -108,33 +96,32 @@
 
                 const centerX = middleRoot.x * canvasElement.width;
                 const centerY = middleRoot.y * canvasElement.height;
-                const currentEl = elements[handStates[index].currentElement];
+                const currentData = elements[handStates[index].currentElement];
 
-                // 1. رسم "الشعار" (الرمز) فوق اليد
-                canvasCtx.save();
-                canvasCtx.translate(centerX, centerY - 80); // إزاحة للأعلى قليلاً عن اليد
-                canvasCtx.scale(-1, 1); // تصحيح اتجاه الرمز لأن الكاميرا مقلوبة
-                canvasCtx.font = "40px Arial";
-                canvasCtx.textAlign = "center";
-                // إضافة توهج خلف الشعار
-                canvasCtx.shadowBlur = 15;
-                canvasCtx.shadowColor = `rgb(${currentEl.color})`;
-                canvasCtx.fillText(currentEl.emoji, 0, 0);
-                canvasCtx.restore();
-
-                // 2. توليد الجسيمات
-                for (let i = 0; i < 5; i++) {
-                    particles.push(new Particle(centerX, centerY, currentEl.color, effectSize));
+                // --- رسم صورة الـ PNG بدلاً من الايموجي ---
+                if (currentData.img.complete) {
+                    const imgSize = 80; // حجم الشعار
+                    canvasCtx.save();
+                    // نقل نقطة الرسم فوق اليد
+                    canvasCtx.translate(centerX, centerY - 100);
+                    // عكس الصورة أفقياً لأن الكانفاس مقلوب (ScaleX -1)
+                    canvasCtx.scale(-1, 1);
+                    // إضافة توهج خلف الصورة
+                    canvasCtx.shadowBlur = 20;
+                    canvasCtx.shadowColor = `rgb(${currentData.color})`;
+                    // رسم الصورة (توسيطها)
+                    canvasCtx.drawImage(currentData.img, -imgSize/2, -imgSize/2, imgSize, imgSize);
+                    canvasCtx.restore();
                 }
-                
-                playEffectSound(handStates[index].currentElement, effectSize);
+
+                for (let i = 0; i < 5; i++) {
+                    particles.push(new Particle(centerX, centerY, currentData.color, effectSize));
+                }
             });
         }
 
-        // تحديث ورسم الجسيمات
         particles = particles.filter(p => p.life > 0);
         particles.forEach(p => { p.update(); p.draw(); });
-
         canvasCtx.restore();
     }
 
@@ -143,10 +130,10 @@
     });
 
     hands.setOptions({
-        maxNumHands: 4, 
+        maxNumHands: 4,
         modelComplexity: 1,
-        minDetectionConfidence: 0.6,
-        minTrackingConfidence: 0.6
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
     });
 
     hands.onResults(onResults);
