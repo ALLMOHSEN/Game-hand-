@@ -2,192 +2,187 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>لوحة العناصر فائقة الدقة ✨</title>
+    <title>المختبر السحري - إصلاح التحكم الكامل ✨</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; position: fixed; width: 100%; height: 100%; }
-        /* جعل الكاميرا والكانفاس يغطيان الشاشة بالكامل بدقة عالية */
-        #output_canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            object-fit: cover;
-            transform: scaleX(-1); /* وضع المرآة */
+        body { margin: 0; overflow: hidden; background: #000; position: fixed; width: 100vw; height: 100vh; }
+        
+        /* الكانفاس الرئيسي الذي يظهر عليه كل شيء */
+        #main_canvas {
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1); /* مرآة */
         }
+
         video { display: none; }
         
         #toolbar {
-            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
-            display: flex; gap: 15px; z-index: 100; background: rgba(0,0,0,0.7);
-            padding: 10px 20px; border-radius: 50px; border: 2px solid rgba(255,255,255,0.5);
+            position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 10px; z-index: 100; background: rgba(255,255,255,0.1);
+            padding: 10px; border-radius: 50px; backdrop-filter: blur(5px);
         }
-        .tool { font-size: 25px; width: 50px; height: 50px; display: flex; align-items: center; justify-content: center; border-radius: 50%; transition: 0.3s; color: white; cursor: pointer; }
-        .active-tool { background: #fff; box-shadow: 0 0 20px #fff; transform: scale(1.1); color: black; }
+        .tool { 
+            font-size: 24px; width: 50px; height: 50px; 
+            display: flex; align-items: center; justify-content: center; 
+            border-radius: 50%; color: white; border: 2px solid white;
+        }
+        .active { background: white; color: black; box-shadow: 0 0 15px white; }
     </style>
 </head>
 <body>
 
 <div id="toolbar">
-    <div id="eraser-tool" class="tool">🧼</div>
-    <div id="element-tool" class="tool active-tool">🪄</div>
-    <div id="pen-tool" class="tool">✏️</div>
+    <div id="eraser-btn" class="tool">🧼</div>
+    <div id="element-btn" class="tool active">🪄</div>
+    <div id="pen-btn" class="tool">✏️</div>
 </div>
 
 <video id="input_video" playsinline></video>
-<canvas id="output_canvas"></canvas>
+<canvas id="main_canvas"></canvas>
 
 <script>
     const videoElement = document.getElementById('input_video');
-    const canvasElement = document.getElementById('output_canvas');
-    const ctx = canvasElement.getContext('2d');
+    const canvas = document.getElementById('main_canvas');
+    const ctx = canvas.getContext('2d');
 
-    // لوحة رسم منفصلة
-    const drawingCanvas = document.createElement('canvas');
-    const dctx = drawingCanvas.getContext('2d');
+    // طبقة رسم مخفية (Buffer) لمنع مسح الكاميرا
+    const drawLayer = document.createElement('canvas');
+    const dctx = drawLayer.getContext('2d');
 
     const elements = {
-        'fire': { src: 'Photoroom_20260309_185127.png', color: '255, 100, 0', freq: 400, img: new Image() },
-        'water': { src: 'Photoroom_20260309_185127.png', color: '0, 150, 255', freq: 600, img: new Image() },
-        'air': { src: 'Photoroom_20260309_185127.png', color: '150, 255, 150', freq: 800, img: new Image() }
+        'fire': { src: 'Photoroom_20260309_185127.png', color: '255,100,0', img: new Image() },
+        'water': { src: 'Photoroom_20260309_185127.png', color: '0,150,255', img: new Image() },
+        'air': { src: 'Photoroom_20260309_185127.png', color: '150,255,150', img: new Image() }
     };
-    for (let k in elements) elements[k].img.src = elements[k].src;
+    for(let k in elements) elements[k].img.src = elements[k].src;
 
-    let currentMode = 'element'; 
+    let mode = 'element'; // eraser, element, pen
     let hue = 0;
-    const handStates = {};
+    let handStates = {};
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-    function playSound(type) {
+    function playNote(f) {
         if (audioCtx.state === 'suspended') audioCtx.resume();
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.connect(gain); gain.connect(audioCtx.destination);
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(elements[type].freq, audioCtx.currentTime);
-        gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
-        osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+        const o = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        o.type = 'sine'; o.frequency.value = f;
+        o.connect(g); g.connect(audioCtx.destination);
+        g.gain.setValueAtTime(0.05, audioCtx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+        o.start(); o.stop(audioCtx.currentTime + 0.1);
     }
 
     function onResults(results) {
-        // تحديث مقاسات الكانفاس لتطابق نافذة المتصفح بدقة
-        if (canvasElement.width !== window.innerWidth) {
-            canvasElement.width = drawingCanvas.width = window.innerWidth;
-            canvasElement.height = drawingCanvas.height = window.innerHeight;
+        // توحيد المقاسات
+        if (canvas.width !== window.innerWidth) {
+            canvas.width = drawLayer.width = window.innerWidth;
+            canvas.height = drawLayer.height = window.innerHeight;
         }
 
         ctx.save();
-        ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        ctx.clearRect(0,0,canvas.width, canvas.height);
         
-        // رسم الكاميرا بدقة عالية (تغطية كاملة)
-        ctx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+        // 1. رسم الكاميرا أولاً كخلفية
+        ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
 
         if (results.multiHandLandmarks) {
-            results.multiHandLandmarks.forEach((landmarks, index) => {
-                if (!handStates[index]) handStates[index] = { currentElement: 'fire', lastRot: 0, lastX: null, lastY: null };
-                
-                const idxTip = landmarks[8];
-                const thmbTip = landmarks[4];
-                const wrist = landmarks[0];
-                const mid = landmarks[9];
+            results.multiHandLandmarks.forEach((marks, i) => {
+                if(!handStates[i]) handStates[i] = { el: 'fire', lastX:null, lastY:null, rot:0 };
 
-                // حساب الإحداثيات بدقة
-                const x = idxTip.x * canvasElement.width;
-                const y = idxTip.y * canvasElement.height;
-                const isPinching = Math.hypot(idxTip.x - thmbTip.x, idxTip.y - thmbTip.y) < 0.05;
+                const indexTip = marks[8];
+                const thumbTip = marks[4];
+                const wrist = marks[0];
+                const palm = marks[9];
 
-                // اختيار الأدوات (تم تعديل النطاق ليصبح أسهل)
-                if (y < 120 && isPinching) {
-                    if (x < canvasElement.width * 0.4) currentMode = 'eraser';
-                    else if (x > canvasElement.width * 0.6) currentMode = 'pen';
-                    else currentMode = 'element';
+                const x = indexTip.x * canvas.width;
+                const y = indexTip.y * canvas.height;
+
+                // حساب المسافة بين الإبهام والسبابة (القرص)
+                const dist = Math.sqrt(Math.pow(indexTip.x - thumbTip.x, 2) + Math.pow(indexTip.y - thumbTip.y, 2));
+                const pinching = dist < 0.06;
+
+                // --- اختيار الأدوات (أعلى الشاشة) ---
+                if (y < 100 && pinching) {
+                    if (x < canvas.width * 0.35) mode = 'eraser';
+                    else if (x > canvas.width * 0.65) mode = 'pen';
+                    else mode = 'element';
                     
-                    document.querySelectorAll('.tool').forEach(t => t.classList.remove('active-tool'));
-                    document.getElementById(`${currentMode}-tool`).classList.add('active-tool');
+                    document.querySelectorAll('.tool').forEach(t => t.classList.remove('active'));
+                    document.getElementById(mode+'-btn').classList.add('active');
                 }
 
-                // تبديل العناصر عند دوران اليد
-                const rot = Math.atan2(mid.y - wrist.y, mid.x - wrist.x) * 180 / Math.PI;
-                if (Math.abs(rot - handStates[index].lastRot) > 60) {
+                // --- تبديل العناصر (تدوير اليد) ---
+                const currentRot = Math.atan2(palm.y - wrist.y, palm.x - wrist.x);
+                if (Math.abs(currentRot - handStates[i].rot) > 0.8) {
                     const keys = Object.keys(elements);
-                    const curIdx = keys.indexOf(handStates[index].currentElement);
-                    handStates[index].currentElement = keys[(curIdx + 1) % keys.length];
-                    handStates[index].lastRot = rot;
-                    playSound(handStates[index].currentElement);
+                    handStates[i].el = keys[(keys.indexOf(handStates[i].el)+1)%3];
+                    handStates[i].rot = currentRot;
+                    playNote(400 + (keys.indexOf(handStates[i].el)*200));
                 }
 
-                const curEl = elements[handStates[index].currentElement];
-
-                // الرسم والمسح
-                if (isPinching) {
+                // --- تنفيذ الرسم أو المسح ---
+                if (pinching) {
                     dctx.lineCap = 'round';
                     dctx.lineJoin = 'round';
-                    
-                    if (currentMode === 'pen') {
+                    if (mode === 'pen') {
                         dctx.globalCompositeOperation = 'source-over';
                         dctx.strokeStyle = `hsl(${hue}, 100%, 50%)`;
-                        dctx.lineWidth = 10;
-                        if (handStates[index].lastX !== null) {
+                        dctx.lineWidth = 12;
+                        if(handStates[i].lastX) {
                             dctx.beginPath();
-                            dctx.moveTo(handStates[index].lastX, handStates[index].lastY);
+                            dctx.moveTo(handStates[i].lastX, handStates[i].lastY);
                             dctx.lineTo(x, y);
                             dctx.stroke();
                         }
-                        hue = (hue + 2) % 360;
-                    } else if (currentMode === 'eraser') {
+                        hue = (hue + 5) % 360;
+                    } else if (mode === 'eraser') {
                         dctx.globalCompositeOperation = 'destination-out';
-                        dctx.lineWidth = 60;
-                        if (handStates[index].lastX !== null) {
+                        dctx.lineWidth = 80;
+                        if(handStates[i].lastX) {
                             dctx.beginPath();
-                            dctx.moveTo(handStates[index].lastX, handStates[index].lastY);
+                            dctx.moveTo(handStates[i].lastX, handStates[i].lastY);
                             dctx.lineTo(x, y);
                             dctx.stroke();
                         }
                     }
-                    handStates[index].lastX = x;
-                    handStates[index].lastY = y;
+                    handStates[i].lastX = x;
+                    handStates[i].lastY = y;
                 } else {
-                    handStates[index].lastX = null;
+                    handStates[i].lastX = null;
                 }
 
-                // رسم المؤثر البصري (PNG)
+                // --- رسم المؤثر (الصورة) ---
                 ctx.save();
-                ctx.translate(x, y - 60);
-                ctx.scale(-1, 1); // تصحيح اتجاه الصورة
-                ctx.shadowBlur = 20;
-                ctx.shadowColor = curEl.color;
-                if (curEl.img.complete) ctx.drawImage(curEl.img, -40, -40, 80, 80);
+                ctx.translate(x, y - 50);
+                ctx.scale(-1, 1); // تصحيح اتجاه الصورة داخل الكانفاس المقلوب
+                if (elements[handStates[i].el].img.complete) {
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = `rgb(${elements[handStates[i].el].color})`;
+                    ctx.drawImage(elements[handStates[i].el].img, -40, -40, 80, 80);
+                }
                 ctx.restore();
             });
         }
 
-        // دمج طبقة الرسم
-        ctx.drawImage(drawingCanvas, 0, 0);
+        // 2. دمج طبقة الرسم فوق الكاميرا
+        ctx.drawImage(drawLayer, 0, 0);
         ctx.restore();
     }
 
     const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-    hands.setOptions({ 
-        maxNumHands: 2, 
-        modelComplexity: 1, 
-        minDetectionConfidence: 0.7, 
-        minTrackingConfidence: 0.7 
-    });
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.75, minTrackingConfidence: 0.75 });
     hands.onResults(onResults);
 
     const camera = new Camera(videoElement, {
         onFrame: async () => { await hands.send({image: videoElement}); },
-        width: 1280, height: 720
+        width: 640, height: 480 // سرعة أفضل في المعالجة
     });
     camera.start();
 
-    // إصلاح مشكلة الحجم عند تدوير الشاشة أو تغيير حجم النافذة
     window.addEventListener('resize', () => {
-        canvasElement.width = drawingCanvas.width = window.innerWidth;
-        canvasElement.height = drawingCanvas.height = window.innerHeight;
+        canvas.width = drawLayer.width = window.innerWidth;
+        canvas.height = drawLayer.height = window.innerHeight;
     });
 </script>
 </body>
