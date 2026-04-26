@@ -3,24 +3,40 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>تحدي أحجية اليدين - لاعبين</title>
+    <title>تحدي أحجية اليدين - التحكم الكامل</title>
+    
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 
     <style>
+        :root {
+            --p1-color: #ff4757;
+            --p2-color: #2ed573;
+            --bg-color: #121212;
+        }
+
         body {
-            margin: 0;
-            padding: 0;
-            background: #1a1a1a;
+            margin: 0; padding: 0;
+            background: var(--bg-color);
             color: white;
-            font-family: sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             overflow: hidden;
             display: flex;
             flex-direction: column;
-            height: 100-vh;
+            height: 100vh;
         }
 
-        #container {
+        #header {
+            height: 60px;
+            background: #1f1f1f;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-bottom: 2px solid #333;
+            z-index: 10;
+        }
+
+        #main-container {
             display: flex;
             flex: 1;
             position: relative;
@@ -28,7 +44,6 @@
 
         .player-side {
             flex: 1;
-            border: 2px solid #333;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -36,79 +51,92 @@
             position: relative;
         }
 
-        #p1-side { border-left: 2px solid #ff4757; }
-        #p2-side { border-right: 2px solid #2ed573; }
+        #p1-side { border-left: 2px solid var(--p1-color); }
+        #p2-side { border-right: 2px solid var(--p2-color); }
 
         canvas {
             max-width: 90%;
             background: #000;
-            border-radius: 8px;
-            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            border-radius: 15px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.9);
         }
 
-        #video-container {
+        /* حاوية الكاميرا مع تأثير المرآة */
+        #camera-module {
             position: absolute;
             bottom: 20px;
             left: 50%;
             transform: translateX(-50%);
-            width: 200px;
-            height: 150px;
-            border: 2px solid #fff;
-            z-index: 10;
+            width: 260px;
+            height: 195px;
+            border: 3px solid #fff;
+            border-radius: 12px;
+            overflow: hidden;
+            z-index: 100;
             background: #000;
         }
 
-        video {
+        video#input_video {
             width: 100%;
             height: 100%;
             object-fit: cover;
+            transform: scaleX(-1); /* تأثير المرآة */
         }
 
-        .controls {
-            padding: 10px;
-            text-align: center;
-            background: #222;
-        }
-
-        button {
-            padding: 10px 20px;
-            font-size: 18px;
-            cursor: pointer;
-            background: #ff4757;
-            color: white;
-            border: none;
-            border-radius: 5px;
-        }
-
-        .status {
+        #capture-zone {
             position: absolute;
-            top: 20px;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 40px;
+            background: rgba(255, 71, 87, 0.7);
+            text-align: center;
+            line-height: 40px;
             font-weight: bold;
-            font-size: 24px;
+            font-size: 14px;
+            pointer-events: none;
+        }
+
+        .win-screen {
+            position: absolute;
+            inset: 0;
+            background: rgba(0,0,0,0.85);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 200;
+            font-size: 48px;
+            color: gold;
+            text-shadow: 0 0 20px gold;
+        }
+
+        .instruction {
+            color: #ffbc00;
+            font-size: 18px;
         }
     </style>
 </head>
 <body>
 
-<div class="controls">
-    <button onclick="startGame()">التقط الصورة وابدأ التحدي!</button>
-    <div id="game-status">بانتظار الكاميرا...</div>
+<div id="header">
+    <div class="instruction" id="status-text">ارفع يدك واطبق أصابعك داخل المربع الأحمر للبدء!</div>
 </div>
 
-<div id="container">
+<div id="main-container">
     <div id="p1-side" class="player-side">
-        <div class="status">لاعب 1 (يسار)</div>
+        <div id="win1" class="win-screen">🏆 فوز اللاعب 1!</div>
         <canvas id="canvas1"></canvas>
     </div>
     
     <div id="p2-side" class="player-side">
-        <div class="status">لاعب 2 (يمين)</div>
+        <div id="win2" class="win-screen">🏆 فوز اللاعب 2!</div>
         <canvas id="canvas2"></canvas>
     </div>
 
-    <div id="video-container">
+    <div id="camera-module">
+        <div id="capture-zone">منطقة البدء (Pinch)</div>
         <video id="input_video"></video>
-        <canvas id="debug_canvas" style="display:none"></canvas>
     </div>
 </div>
 
@@ -124,126 +152,138 @@
     let grabbedPiece = { player1: null, player2: null };
     let puzzleImage = null;
 
-    // إعدادات الأحجية
     const grid = 3;
-    const size = 300;
+    const size = 400; 
     canvas1.width = canvas2.width = size;
     canvas1.height = canvas2.height = size;
 
-    function startGame() {
-        // التقاط فريم من الفيديو كصورة للعبة
+    function startPuzzle() {
+        if (gameActive) return;
+        
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = videoElement.videoWidth;
         tempCanvas.height = videoElement.videoHeight;
         const tempCtx = tempCanvas.getContext('2d');
+        
+        // عكس الصورة لتطابق المرآة عند القص
+        tempCtx.translate(tempCanvas.width, 0);
+        tempCtx.scale(-1, 1);
         tempCtx.drawImage(videoElement, 0, 0);
         
         puzzleImage = new Image();
         puzzleImage.src = tempCanvas.toDataURL();
         
         puzzleImage.onload = () => {
-            initPuzzle();
+            generatePieces();
             gameActive = true;
-            document.getElementById('game-status').innerText = "اللعبة بدأت! استعمل يدك للتحريك";
+            document.getElementById('capture-zone').style.display = 'none';
+            document.getElementById('status-text').innerText = "اللعبة بدأت! رتب القطع لتطابق الصورة";
+            document.querySelectorAll('.win-screen').forEach(el => el.style.display = 'none');
         };
     }
 
-    function initPuzzle() {
+    function generatePieces() {
         pieces = [];
         const pSize = size / grid;
         for (let r = 0; r < grid; r++) {
             for (let c = 0; c < grid; c++) {
-                const piece = {
+                pieces.push({
                     id: r * grid + c,
                     sx: c * (puzzleImage.width / grid),
                     sy: r * (puzzleImage.height / grid),
                     sw: puzzleImage.width / grid,
                     sh: puzzleImage.height / grid,
-                    // مواقع عشوائية للاعبين
                     p1: { x: Math.random() * (size - pSize), y: Math.random() * (size - pSize) },
                     p2: { x: Math.random() * (size - pSize), y: Math.random() * (size - pSize) },
                     correctX: c * pSize,
                     correctY: r * pSize
-                };
-                pieces.push(piece);
+                });
             }
         }
     }
 
     function onResults(results) {
-        if (!gameActive) return;
-
-        // مسح الكانفاس للرسم الجديد
         ctx1.clearRect(0, 0, size, size);
         ctx2.clearRect(0, 0, size, size);
 
-        // رسم القطع
-        pieces.forEach(p => {
-            const pSize = size / grid;
-            // رسم للاعب 1
-            ctx1.drawImage(puzzleImage, p.sx, p.sy, p.sw, p.sh, p.p1.x, p.p1.y, pSize, pSize);
-            // رسم للاعب 2
-            ctx2.drawImage(puzzleImage, p.sx, p.sy, p.sw, p.sh, p.p2.x, p.p2.y, pSize, pSize);
-        });
+        // رسم القطع إذا كانت الصورة موجودة
+        if (puzzleImage) {
+            pieces.forEach(p => {
+                const ps = size / grid;
+                ctx1.drawImage(puzzleImage, p.sx, p.sy, p.sw, p.sh, p.p1.x, p.p1.y, ps, ps);
+                ctx2.drawImage(puzzleImage, p.sx, p.sy, p.sw, p.sh, p.p2.x, p.p2.y, ps, ps);
+            });
+        }
 
         if (results.multiHandLandmarks) {
-            results.multiHandLandmarks.forEach((landmarks, index) => {
+            for (const landmarks of results.multiHandLandmarks) {
                 const thumb = landmarks[4];
                 const indexF = landmarks[8];
-                
-                // حساب المسافة بين الإبهام والسبابة (Pinch)
                 const dist = Math.hypot(thumb.x - indexF.x, thumb.y - indexF.y);
-                const isPinching = dist < 0.05;
+                const isPinching = dist < 0.04;
 
-                // تحويل إحداثيات MediaPipe (0-1) إلى بكسل الكانفاس
-                // ملاحظة: قمنا بعكس X لأن الكاميرا تظهر كمرآة
-                const handX = (1 - indexF.x) * size; 
-                const handY = indexF.y * size;
+                // تحويل الإحداثيات (MediaPipe يعطي X معكوساً، لذا نستخدمه كما هو للمرآة)
+                const handX = thumb.x * size; 
+                const handY = thumb.y * size;
 
-                // تحديد اللاعب (يسار الكاميرا هو يمين الشاشة والعكس)
-                const player = indexF.x > 0.5 ? "player1" : "player2";
+                // تفعيل البداية باليد (لو كانت اليد في الربع العلوي من الكاميرا)
+                if (!gameActive && isPinching && thumb.y < 0.25) {
+                    startPuzzle();
+                }
+
+                if (!gameActive) continue;
+
+                // تحديد أي لاعب بناءً على موقع اليد في الكاميرا
+                const player = thumb.x < 0.5 ? "player1" : "player2";
                 const currentCtx = player === "player1" ? ctx1 : ctx2;
-
-                // رسم مؤشر لليد
-                currentCtx.fillStyle = isPinching ? "red" : "yellow";
+                
+                // رسم مؤشر اليد (توهج أحمر عند المسك، أخضر عند التحويم)
+                currentCtx.fillStyle = isPinching ? "#ff4757" : "#2ed573";
+                currentCtx.shadowBlur = 15;
+                currentCtx.shadowColor = currentCtx.fillStyle;
                 currentCtx.beginPath();
                 currentCtx.arc(handX, handY, 10, 0, Math.PI * 2);
                 currentCtx.fill();
+                currentCtx.shadowBlur = 0;
 
                 if (isPinching) {
                     if (!grabbedPiece[player]) {
-                        // محاولة إمساك قطعة
                         pieces.forEach(p => {
                             const pos = p[player === "player1" ? "p1" : "p2"];
-                            if (handX > pos.x && handX < pos.x + (size/grid) && 
-                                handY > pos.y && handY < pos.y + (size/grid)) {
+                            const ps = size / grid;
+                            if (handX > pos.x && handX < pos.x + ps && handY > pos.y && handY < pos.y + ps) {
                                 grabbedPiece[player] = p;
                             }
                         });
                     } else {
-                        // تحريك القطعة الممسوكة
-                        const pSize = size / grid;
+                        const ps = size / grid;
                         grabbedPiece[player][player === "player1" ? "p1" : "p2"] = {
-                            x: handX - pSize / 2,
-                            y: handY - pSize / 2
+                            x: handX - ps / 2,
+                            y: handY - ps / 2
                         };
                     }
                 } else {
                     grabbedPiece[player] = null;
                 }
-            });
+            }
         }
-        checkWin();
+        if (gameActive) checkWinner();
     }
 
-    function checkWin() {
-        const threshold = 20;
-        let p1Win = pieces.every(p => Math.hypot(p.p1.x - p.correctX, p.p1.y - p.correctY) < threshold);
-        let p2Win = pieces.every(p => Math.hypot(p.p2.x - p.correctX, p.p2.y - p.correctY) < threshold);
+    function checkWinner() {
+        const tolerance = 25;
+        let p1Status = pieces.every(p => Math.hypot(p.p1.x - p.correctX, p.p1.y - p.correctY) < tolerance);
+        let p2Status = pieces.every(p => Math.hypot(p.p2.x - p.correctX, p.p2.y - p.correctY) < tolerance);
 
-        if (p1Win || p2Win) {
-            gameActive = false;
-            alert(p1Win ? "مبروك للاعب 1 الفوز!" : "مبروك للاعب 2 الفوز!");
+        if (p1Status) { 
+            gameActive = false; 
+            document.getElementById('win1').style.display = 'flex';
+            document.getElementById('status-text').innerText = "انتهت اللعبة! فوز اللاعب 1";
+        }
+        if (p2Status) { 
+            gameActive = false; 
+            document.getElementById('win2').style.display = 'flex';
+            document.getElementById('status-text').innerText = "انتهت اللعبة! فوز اللاعب 2";
         }
     }
 
@@ -254,8 +294,8 @@
     hands.setOptions({
         maxNumHands: 2,
         modelComplexity: 1,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
     });
 
     hands.onResults(onResults);
@@ -264,11 +304,9 @@
         onFrame: async () => {
             await hands.send({image: videoElement});
         },
-        width: 640,
-        height: 480
+        width: 640, height: 480
     });
     camera.start();
-
 </script>
 </body>
 </html>
