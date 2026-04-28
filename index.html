@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>Almohsen - Multi-User Magic Wall</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; transform: scaleX(-1); }
+        video { display: none; }
+        #toolbar {
+            position: absolute; top: 20px; width: 100%;
+            display: flex; justify-content: center; gap: 15px; z-index: 100;
+        }
+        .icon-box {
+            background: rgba(255, 255, 255, 0.15); backdrop-filter: blur(15px);
+            padding: 12px 25px; border-radius: 50px; border: 2px solid rgba(255,255,255,0.5);
+            color: white; font-size: 22px; pointer-events: none;
+            display: flex; flex-direction: column; align-items: center;
+        }
+        .icon-label { font-size: 10px; margin-top: 5px; text-transform: uppercase; letter-spacing: 1px; }
+        /* وضعنا "active" فقط كدليل بصري ثابت للألوان */
+        #btn-pen { border-color: #00f2ff; }
+        #btn-eraser { border-color: #ff4757; }
+        #btn-elem { border-color: #ffa502; }
+    </style>
+</head>
+<body>
+
+<div id="toolbar">
+    <div id="btn-pen" class="icon-box">✏️<span class="icon-label">قلم</span></div>
+    <div id="btn-eraser" class="icon-box">🧽<span class="icon-label">ممحاة</span></div>
+    <div id="btn-elem" class="icon-box">🌀<span class="icon-label">عناصر</span></div>
+</div>
+
+<video id="input_video"></video>
+<canvas id="output_canvas"></canvas>
+
+<script>
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+
+    let allPaths = [];
+    let particles = [];
+    let handStates = {}; // تخزين حالة كل يد بناءً على الـ Index
+    let globalHue = 0;
+
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playMagicSound(f) {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(f, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.02, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.2);
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.start(); osc.stop(audioCtx.currentTime + 0.2);
+    }
+
+    class Particle {
+        constructor(x, y, hue) {
+            this.x = x; this.y = y;
+            this.hue = hue;
+            this.size = Math.random() * 6 + 2;
+            this.speedX = (Math.random() - 0.5) * 10;
+            this.speedY = (Math.random() - 0.5) * 10;
+            this.life = 1.0;
+        }
+        update() {
+            this.x += this.speedX; this.y += this.speedY;
+            this.life -= 0.03;
+        }
+        draw() {
+            canvasCtx.fillStyle = `hsla(${this.hue}, 100%, 50%, ${this.life})`;
+            canvasCtx.beginPath();
+            canvasCtx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+            canvasCtx.fill();
+        }
+    }
+
+    function onResults(results) {
+        canvasElement.width = window.innerWidth;
+        canvasElement.height = window.innerHeight;
+        
+        canvasCtx.save();
+        // عكس الكانفاس برمجياً لتسهيل الرسم
+        canvasCtx.scale(-1, 1);
+        canvasCtx.translate(-canvasElement.width, 0);
+        
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+        globalHue = (globalHue + 1) % 360;
+
+        // 1. رسم كافة الخطوط المسجلة (مرة واحدة في الفريم)
+        allPaths.forEach(path => {
+            if (path.points.length < 2) return;
+            canvasCtx.beginPath();
+            canvasCtx.strokeStyle = path.color;
+            canvasCtx.lineWidth = 10;
+            canvasCtx.lineCap = 'round';
+            canvasCtx.lineJoin = 'round';
+            canvasCtx.moveTo(path.points[0].x, path.points[0].y);
+            for(let i = 1; i < path.points.length; i++) {
+                canvasCtx.lineTo(path.points[i].x, path.points[i].y);
+            }
+            canvasCtx.stroke();
+        });
+
+        // 2. معالجة كل يد على حدة
+        if (results.multiHandLandmarks) {
+            results.multiHandLandmarks.forEach((landmarks, index) => {
+                // إنشاء حالة مستقلة لكل يد إذا لم تكن موجودة
+                if (!handStates[index]) {
+                    handStates[index] = { mode: 'elem', drawing: false, lastX: 0, lastY: 0 };
+                }
+                const state = handStates[index];
+
+                const tip = landmarks[8];
+                const x = tip.x * canvasElement.width;
+                const y = tip.y * canvasElement.height;
+                
+                const thumb = landmarks[4];
+                const pinky = landmarks[20];
+                const openness = Math.hypot(thumb.x - pinky.x, thumb.y - pinky.y);
+                const isPinching = Math.hypot(landmarks[8].x - landmarks[4].x, landmarks[8].y - landmarks[4].y) < 0.05;
+
+                // اختيار النمط عبر المناطق العلوية
+                if (y < 120) {
+                    if (x < canvasElement.width * 0.35) state.mode = 'pen';
+                    else if (x > canvasElement.width * 0.65) state.mode = 'elem';
+                    else state.mode = 'eraser';
+                }
+
+                // رسم مؤشر "الأيقونة" فوق كل يد لتمييز وضعها
+                canvasCtx.save();
+                canvasCtx.scale(-1, 1); // عكس النص ليكون مقروءاً
+                canvasCtx.font = "30px Arial";
+                const icon = state.mode === 'pen' ? "✏️" : (state.mode === 'eraser' ? "🧽" : "🌀");
+                canvasCtx.fillText(icon, -(x + 20), y - 30);
+                canvasCtx.restore();
+
+                // تنفيذ الأوامر بناءً على النمط
+                if (state.mode === 'elem') {
+                    const size = openness * 350;
+                    const grad = canvasCtx.createRadialGradient(x, y, 0, x, y, size);
+                    grad.addColorStop(0, `hsla(${globalHue}, 100%, 60%, 0.8)`);
+                    grad.addColorStop(1, `hsla(${globalHue}, 100%, 60%, 0)`);
+                    canvasCtx.fillStyle = grad;
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(x, y, size, 0, Math.PI * 2);
+                    canvasCtx.fill();
+
+                    if (openness > 0.1) {
+                        for(let i=0; i<2; i++) particles.push(new Particle(x, y, globalHue));
+                        if(Math.random() > 0.95) playMagicSound(100 + size);
+                    }
+                } 
+                else if (state.mode === 'pen') {
+                    if (isPinching) {
+                        if (!state.drawing) {
+                            state.drawing = true;
+                            const newPath = { color: `hsl(${globalHue}, 100%, 50%)`, points: [{x, y}] };
+                            allPaths.push(newPath);
+                            state.pathIdx = allPaths.length - 1;
+                            playMagicSound(500);
+                        } else {
+                            // إضافة نقطة فقط إذا تحركت اليد مسافة كافية (تحسين الأداء)
+                            const currentPath = allPaths[state.pathIdx];
+                            const lastPt = currentPath.points[currentPath.points.length - 1];
+                            if (Math.hypot(lastPt.x - x, lastPt.y - y) > 5) {
+                                currentPath.points.push({x, y});
+                            }
+                        }
+                    } else {
+                        state.drawing = false;
+                    }
+                } 
+                else if (state.mode === 'eraser') {
+                    if (isPinching) {
+                        allPaths = allPaths.filter(path => {
+                            // حذف المسارات التي تقع نقاطها قريبة من الممحاة
+                            path.points = path.points.filter(p => Math.hypot(p.x - x, p.y - y) > 35);
+                            return path.points.length > 1;
+                        });
+                        if(Math.random() > 0.9) playMagicSound(200);
+                    }
+                }
+            });
+        }
+
+        // 3. تحديث ورسم الجسيمات (مرة واحدة)
+        particles = particles.filter(p => p.life > 0);
+        particles.forEach(p => { p.update(); p.draw(); });
+
+        canvasCtx.restore();
+    }
+
+    const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+    hands.setOptions({ 
+        maxNumHands: 6, // تقليل العدد لزيادة الاستقرار، يمكنك رفعه لـ 10 إذا كان الجهاز قوياً
+        modelComplexity: 1, 
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6 
+    });
+    hands.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+        onFrame: async () => { await hands.send({image: videoElement}); },
+        width: 1280, height: 720
+    });
+    camera.start();
+
+    // التعامل مع تغيير حجم النافذة
+    window.addEventListener('resize', () => {
+        canvasElement.width = window.innerWidth;
+        canvasElement.height = window.innerHeight;
+    });
+</script>
+</body>
+</html>
