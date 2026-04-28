@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <title>Almohsen - Pro Magic Wall</title>
+    <title>Almohsen</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <style>
@@ -18,7 +18,10 @@
             padding: 12px 25px; border-radius: 50px; border: 2px solid rgba(255,255,255,0.3);
             color: white; font-size: 18px; transition: 0.3s;
         }
-        .active { background: rgba(0, 242, 255, 0.3); border-color: #00f2ff; transform: scale(1.1); }
+        /* الألوان التفاعلية للأزرار */
+        .active-pen { border-color: #00f2ff; background: rgba(0, 242, 255, 0.3); box-shadow: 0 0 15px #00f2ff; }
+        .active-eraser { border-color: #ff4757; background: rgba(255, 71, 87, 0.3); box-shadow: 0 0 15px #ff4757; }
+        .active-elem { border-color: #ffa502; background: rgba(255, 165, 2, 0.3); box-shadow: 0 0 15px #ffa502; }
     </style>
 </head>
 <body>
@@ -42,33 +45,25 @@
     let handStates = {};
     let globalHue = 0;
 
-    // محرك الصوت المتقدم
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const scale = [261.63, 293.66, 329.63, 392.00, 440.00, 523.25]; // C Major Pentatonic
+    const scale = [261.63, 293.66, 329.63, 392.00, 440.00]; 
 
     function playNote(freq, vol) {
         if (audioCtx.state === 'suspended') audioCtx.resume();
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
-        
-        osc.type = 'triangle'; 
+        osc.type = 'triangle';
         osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-        
         gain.gain.setValueAtTime(0, audioCtx.currentTime);
         gain.gain.linearRampToValueAtTime(vol * 0.1, audioCtx.currentTime + 0.05);
         gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.8);
-        
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.8);
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.start(); osc.stop(audioCtx.currentTime + 0.8);
     }
 
     class Particle {
         constructor(x, y, hue) {
-            this.x = x; this.y = y;
-            this.hue = hue;
+            this.x = x; this.y = y; this.hue = hue;
             this.size = Math.random() * 4 + 1;
             this.speedX = (Math.random() - 0.5) * 6;
             this.speedY = (Math.random() - 0.5) * 6;
@@ -86,7 +81,7 @@
         canvasElement.height = window.innerHeight;
         
         canvasCtx.save();
-        // Mirror Effect
+        // تطبيق المرآة
         canvasCtx.translate(canvasElement.width, 0);
         canvasCtx.scale(-1, 1);
         
@@ -117,21 +112,27 @@
                 const tip = landmarks[8];
                 const thumb = landmarks[4];
                 const wrist = landmarks[0];
-                const x = tip.x * canvasElement.width;
+                
+                // الإحداثيات الخام (0 إلى 1)
+                const rawX = tip.x; 
                 const y = tip.y * canvasElement.height;
+                const x = tip.x * canvasElement.width;
 
-                // تحديث الواجهة (Mirror Aware)
-                const uiX = canvasElement.width - x; 
-                if (y < 100) {
-                    if (uiX < canvasElement.width * 0.35) state.mode = 'pen';
-                    else if (uiX > canvasElement.width * 0.65) state.mode = 'elem';
-                    else state.mode = 'eraser';
+                // التصحيح المنطقي للاختيار (بما أن الكاميرا مقلوبة):
+                // tip.x القريب من 0 هو يمين الشاشة بصرياً
+                // tip.x القريب من 1 هو يسار الشاشة بصرياً
+                if (y < 120) {
+                    if (rawX < 0.35) state.mode = 'pen';        // اليمين بصرياً
+                    else if (rawX > 0.65) state.mode = 'elem';   // اليسار بصرياً
+                    else state.mode = 'eraser';                 // الوسط
                 }
 
-                // تطبيق الـ Active Class بصرياً
-                document.getElementById('btn-pen').className = 'icon-box' + (state.mode === 'pen' ? ' active' : '');
-                document.getElementById('btn-eraser').className = 'icon-box' + (state.mode === 'eraser' ? ' active' : '');
-                document.getElementById('btn-elem').className = 'icon-box' + (state.mode === 'elem' ? ' active' : '');
+                // تحديث شكل الأزرار بناءً على حالة "أول يد" فقط لتجنب الوميض
+                if(index === 0) {
+                    document.getElementById('btn-pen').className = 'icon-box' + (state.mode === 'pen' ? ' active-pen' : '');
+                    document.getElementById('btn-eraser').className = 'icon-box' + (state.mode === 'eraser' ? ' active-eraser' : '');
+                    document.getElementById('btn-elem').className = 'icon-box' + (state.mode === 'elem' ? ' active-elem' : '');
+                }
 
                 const isPinching = Math.hypot(tip.x - thumb.x, tip.y - thumb.y) < 0.04;
 
@@ -142,17 +143,17 @@
                         const fy = fTip.y * canvasElement.height;
                         const dist = Math.hypot(fTip.x - wrist.x, fTip.y - wrist.y);
 
-                        if (dist > 0.15) { // إذا كان الإصبع مفتوحاً
-                            const size = dist * 120;
+                        if (dist > 0.18) { 
+                            const size = dist * 130;
                             const g = canvasCtx.createRadialGradient(fx, fy, 0, fx, fy, size);
-                            g.addColorStop(0, `hsla(${(globalHue+i*30)%360}, 100%, 60%, 0.8)`);
+                            g.addColorStop(0, `hsla(${(globalHue+i*40)%360}, 100%, 60%, 0.8)`);
                             g.addColorStop(1, 'transparent');
                             canvasCtx.fillStyle = g;
                             canvasCtx.beginPath(); canvasCtx.arc(fx, fy, size, 0, Math.PI*2); canvasCtx.fill();
                             
-                            if (Math.random() > 0.94) {
+                            if (Math.random() > 0.93) {
                                 playNote(scale[i % scale.length], dist);
-                                particles.push(new Particle(fx, fy, (globalHue+i*30)%360));
+                                particles.push(new Particle(fx, fy, (globalHue+i*40)%360));
                             }
                         }
                     });
@@ -171,7 +172,7 @@
                     allPaths.forEach(path => {
                         let currentSegment = [];
                         path.points.forEach(p => {
-                            if (Math.hypot(p.x - x, p.y - y) > 30) {
+                            if (Math.hypot(p.x - x, p.y - y) > 35) {
                                 currentSegment.push(p);
                             } else {
                                 if (currentSegment.length > 1) nextPaths.push({color: path.color, points: currentSegment});
@@ -196,10 +197,11 @@
     hands.setOptions({ maxNumHands: 4, modelComplexity: 1, minDetectionConfidence: 0.7 });
     hands.onResults(onResults);
 
-    new Camera(videoElement, {
+    const camera = new Camera(videoElement, {
         onFrame: async () => { await hands.send({image: videoElement}); },
         width: 1280, height: 720
-    }).start();
+    });
+    camera.start();
 </script>
 </body>
 </html>
